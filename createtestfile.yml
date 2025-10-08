@@ -1,6 +1,10 @@
-- name: Create test file via PowerShell
+---
+- name: Create test file via Ansible on Windows
   hosts: windows
+  gather_facts: no
+
   tasks:
-    - name: Run PowerShell script
-      win_shell: |
-        New-Item -Path "C:\temp\testfile.txt" -ItemType File -Value "This is a test file from Semaphore"
+    - name: Create C:\Temp\testfile.txt
+      win_file:
+        path: C:\Temp\testfile.txt
+        state: touch
