@@ -1,0 +1,6 @@
+- name: Create test file via PowerShell
+  hosts: windows
+  tasks:
+    - name: Run PowerShell script
+      win_shell: |
+        New-Item -Path "C:\temp\testfile.txt" -ItemType File -Value "This is a test file from Semaphore"
