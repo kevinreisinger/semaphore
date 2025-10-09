@@ -2,19 +2,46 @@
 - name: Update Linux Servers
   hosts: linux
   become: yes
+  gather_facts: yes
+
+  vars:
+    deferred_packages:
+      - libnss-systemd
+      - libpam-systemd
+      - libsystemd-shared
+      - libsystemd0
+      - libudev1
+      - snapd
+      - systemd
+      - systemd-dev
+      - systemd-hwe-hwdb
+      - systemd-resolved
+      - systemd-sysv
+      - systemd-timesyncd
+      - tcpdump
+
   tasks:
 
     - name: Update apt cache
       ansible.builtin.apt:
         update_cache: yes
-        cache_valid_time: 3600
+        cache_valid_time: 0
 
-    - name: Upgrade all packages, including phased/systemd packages
+    - name: Upgrade all packages
       ansible.builtin.apt:
         upgrade: dist
-        allow_unauthenticated: no
+
+    - name: Force upgrade deferred/systemd packages
+      ansible.builtin.apt:
+        name: "{{ deferred_packages }}"
+        state: latest
 
     - name: Remove unnecessary packages
       ansible.builtin.apt:
         autoremove: yes
         purge: yes
+
+    - name: Reboot if required
+      ansible.builtin.reboot:
+        reboot_timeout: 600
+        test_command: whoami
