@@ -2,5 +2,5 @@
   hosts: windows
   tasks:
     - name: Create test file via PowerShell
-      win_shell: New-Item -Path "C:\temp\testfile.txt" -ItemType File -Value "Hello from Semaphore!"
+      win_shell: New-Item -Path "C:\temp\testfile.txt" -ItemType File -Value "Hello again from Semaphore!"
 
