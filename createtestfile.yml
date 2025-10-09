@@ -9,4 +9,4 @@
 
     - name: Create test file via PowerShell (overwrite if exists)
       win_shell: |
-        New-Item -Path "C:\temp\testfile.txt" -ItemType File -Value "Hello again from Semaphore!" -Force
+        New-Item -Path "C:\temp\testfile.txt" -ItemType File -Value "Hello again and again from Semaphore!" -Force
