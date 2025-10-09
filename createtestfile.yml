@@ -1,6 +1,12 @@
 - name: Create test file on Windows
   hosts: windows
+  gather_facts: false
   tasks:
-    - name: Create test file via PowerShell
-      win_shell: New-Item -Path "C:\temp\testfile.txt" -ItemType File -Value "Hello again from Semaphore!"
+    - name: Ensure C:\temp folder exists
+      win_file:
+        path: C:\temp
+        state: directory
 
+    - name: Create test file via PowerShell (overwrite if exists)
+      win_shell: |
+        New-Item -Path "C:\temp\testfile.txt" -ItemType File -Value "Hello again from Semaphore!" -Force
