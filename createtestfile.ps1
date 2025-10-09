@@ -1,1 +1,1 @@
-New-Item -Path "C:\temp\testfile.txt" -ItemType File -Value "This is some test content for the file."
+New-Item -Path "C:\temp\testfile.txt" -ItemType File -Value "Hello again and again from Semaphore via PS!" -Force
