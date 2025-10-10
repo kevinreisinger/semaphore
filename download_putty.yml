@@ -1,0 +1,31 @@
+---
+- name: Download Putty
+  hosts: windows
+  gather_facts: no
+  become: yes
+
+  tasks:
+    - name: Run PowerShell to download PuTTY.exe into C:\Windows
+      win_shell: |
+        # PowerShell command to download PuTTY directly into C:\Windows
+        $Destination = "C:\Windows\putty.exe"
+        $PuTTY_URL = "https://the.earth.li/~sgtatham/putty/latest/w64/putty.exe"
+
+        Write-Host "⬇️ Downloading PuTTY from official site..."
+
+        try {
+            Invoke-WebRequest -Uri $PuTTY_URL -OutFile $Destination -UseBasicParsing
+            Write-Host "✅ PuTTY.exe downloaded successfully to $Destination"
+        } catch {
+            Write-Host "❌ Failed to download PuTTY. Please check your internet connection or proxy settings."
+            exit 1
+        }
+
+        if (Test-Path $Destination) {
+            Write-Host "✅ Verification complete. PuTTY.exe is now installed at $Destination"
+        } else {
+            Write-Host "❌ Verification failed — PuTTY.exe not found in C:\Windows"
+        }
+
+      args:
+        executable: powershell
