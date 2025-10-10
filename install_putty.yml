@@ -3,7 +3,7 @@
   hosts: windows
   gather_facts: no
   vars:
-    source_share: "\\\\kevireis-home\\i$\\Applications\\Telnet Clients\\Putty\\v0.83putty.exe"
+    source_share: "\\\\kevireis-home\\i$\\Applications\\Telnet Clients\\Putty\\v0.83\\putty.exe"
     destination_path: "C:\\Windows\\putty.exe"
 
   tasks:
