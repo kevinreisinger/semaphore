@@ -1,16 +1,33 @@
 ---
-- name: Copy PuTTY.exe from Windows share to Windows hosts
+- name: Copy PuTTY.exe from network share with credentials
   hosts: windows
   gather_facts: no
 
   vars:
-    source_share: "\\\\kevireis-home\\i$\\Applications\\Telnet Clients\\Putty\\v0.83\\putty.exe"
     remote_putty_path: "C:\\Windows\\putty.exe"
+    network_share_root: "\\\\kevireis-home\\i$\\Applications\\Telnet Clients\\Putty\\v0.83"
+    putty_file_name: "putty.exe"
+    share_username:
+    share_password:
 
   tasks:
-    - name: Copy PuTTY.exe from network share (overwrite if exists)
+    - name: Map network drive Z:
+      win_shell: |
+        $User = "{{ share_username }}"
+        $Pass = ConvertTo-SecureString "{{ share_password }}" -AsPlainText -Force
+        $Cred = New-Object System.Management.Automation.PSCredential($User,$Pass)
+        New-PSDrive -Name Z -PSProvider FileSystem -Root "{{ network_share_root }}" -Credential $Cred -Persist
+      args:
+        executable: powershell
+
+    - name: Copy PuTTY.exe from mapped drive
       win_copy:
-        src: "{{ source_share }}"
+        src: "Z:\\{{ putty_file_name }}"
         dest: "{{ remote_putty_path }}"
-        remote_src: yes   # important for UNC path
-        force: yes        # overwrite if already exists
+        remote_src: yes
+        force: yes   # overwrite if exists
+
+    - name: Remove mapped network drive
+      win_shell: Remove-PSDrive -Name Z
+      args:
+        executable: powershell
