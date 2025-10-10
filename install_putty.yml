@@ -1,30 +1,15 @@
 ---
-- name: Copy PuTTY.exe from shared folder to Windows directory
+- name: Copy PuTTY.exe from Windows share to Windows hosts
   hosts: windows
   gather_facts: no
+
   vars:
     source_share: "\\\\kevireis-home\\i$\\Applications\\Telnet Clients\\Putty\\v0.83\\putty.exe"
-    destination_path: "C:\\Windows\\putty.exe"
+    remote_putty_path: "C:\\Windows\\putty.exe"
 
   tasks:
-    - name: Copy PuTTY.exe from shared network path
-      win_shell: |
-        $source = "{{ source_share }}"
-        $dest = "{{ destination_path }}"
-
-        if (Test-Path $dest) {
-            Write-Host "✅ PuTTY already exists at $dest - skipping."
-            exit 0
-        }
-
-        Write-Host "📁 Copying PuTTY from $source to $dest..."
-        Copy-Item -Path $source -Destination $dest -Force
-        if (Test-Path $dest) {
-            Write-Host "✅ PuTTY copied successfully."
-            exit 0
-        } else {
-            Write-Host "❌ Failed to copy PuTTY.exe from $source"
-            exit 1
-        }
-      args:
-        executable: powershell
+    - name: Copy PuTTY.exe from network share
+      win_copy:
+        src: "{{ source_share }}"
+        dest: "{{ remote_putty_path }}"
+        force: yes
