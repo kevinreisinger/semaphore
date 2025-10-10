@@ -1,5 +1,5 @@
 ---
-- name: Download Putty
+- name: Install Putty
   hosts: windows
   gather_facts: no
   become: yes
