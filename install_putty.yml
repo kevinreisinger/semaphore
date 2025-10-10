@@ -2,8 +2,7 @@
 - name: Install Putty
   hosts: windows
   gather_facts: no
-  become: yes
-
+  
   tasks:
     - name: Run PowerShell to download PuTTY.exe into C:\Windows
       win_shell: |
