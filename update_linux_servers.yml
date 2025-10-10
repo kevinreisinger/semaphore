@@ -21,8 +21,6 @@
         apt-get -o APT::Get::Always-Include-Phased-Updates=true dist-upgrade -y
         apt-get autoremove -y
         apt-get autoclean -y
-      args:
-        warn: false
 
     - name: Check if reboot is required
       ansible.builtin.stat:
