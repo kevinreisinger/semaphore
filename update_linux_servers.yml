@@ -1,0 +1,55 @@
+---
+- name: Update Linux Servers
+  hosts: linux
+  become: yes
+  gather_facts: yes
+
+  vars:
+    email_to: "kevinreisinger@gmail.com"
+    temp_summary: "/tmp/update_summary.txt"
+    reboot_required_hosts: []
+
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: yes
+
+    - name: Upgrade all packages (force include phased updates)
+      ansible.builtin.shell: |
+        export APT_LISTCHANGES_FRONTEND=none
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get -o APT::Get::Always-Include-Phased-Updates=true dist-upgrade -y
+        apt-get autoremove -y
+        apt-get autoclean -y
+      args:
+        warn: false
+
+    - name: Check if reboot is required
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required
+
+    - name: Add host to reboot list if required
+      ansible.builtin.set_fact:
+        reboot_required_hosts: "{{ reboot_required_hosts + [inventory_hostname] }}"
+      when: reboot_required.stat.exists
+      run_once: false
+
+    - name: Share reboot list across hosts
+      ansible.builtin.set_fact:
+        global_reboot_required_hosts: "{{ hostvars | dict2items | selectattr('value.reboot_required.stat.exists','defined') | selectattr('value.reboot_required.stat.exists') | map(attribute='key') | list }}"
+      run_once: true
+
+    - name: Send email if any hosts require reboot
+      ansible.builtin.shell: |
+        echo "The following servers require a reboot after updates:" > {{ temp_summary }}
+        echo "" >> {{ temp_summary }}
+        for host in {{ global_reboot_required_hosts | join(' ') }}; do
+          echo " - $host" >> {{ temp_summary }}
+        done
+        echo "" >> {{ temp_summary }}
+        echo "Triggered on {{ ansible_date_time.date }}" >> {{ temp_summary }}
+        mail -s "⚠️ Linux Servers Reboot Required" {{ email_to }} < {{ temp_summary }}
+      when: global_reboot_required_hosts | length > 0
+      delegate_to: localhost
+      run_once: true
