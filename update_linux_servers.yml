@@ -4,44 +4,42 @@
   become: yes
   gather_facts: yes
 
-  vars:
-    deferred_packages:
-      - libnss-systemd
-      - libpam-systemd
-      - libsystemd-shared
-      - libsystemd0
-      - libudev1
-      - snapd
-      - systemd
-      - systemd-dev
-      - systemd-hwe-hwdb
-      - systemd-resolved
-      - systemd-sysv
-      - systemd-timesyncd
-      - tcpdump
-
   tasks:
-
     - name: Update apt cache
       ansible.builtin.apt:
         update_cache: yes
         cache_valid_time: 0
 
-    - name: Upgrade all packages
+    - name: Upgrade all packages without reboot
       ansible.builtin.apt:
         upgrade: dist
-
-    - name: Force upgrade deferred/systemd packages
-      ansible.builtin.apt:
-        name: "{{ deferred_packages }}"
-        state: latest
-
-    - name: Remove unnecessary packages
-      ansible.builtin.apt:
         autoremove: yes
         purge: yes
 
-#    - name: Reboot if required
-#      ansible.builtin.reboot:
-#        reboot_timeout: 600
-#        test_command: whoami
+    - name: Force upgrade deferred/systemd packages
+      ansible.builtin.apt:
+        name:
+          - libnss-systemd
+          - libpam-systemd
+          - libsystemd-shared
+          - libsystemd0
+          - libudev1
+          - snapd
+          - systemd
+          - systemd-dev
+          - systemd-hwe-hwdb
+          - systemd-resolved
+          - systemd-sysv
+          - systemd-timesyncd
+          - tcpdump
+        state: latest
+
+    - name: Check if reboot is required
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required
+
+#   - name: Notify via email if reboot is required
+#     ansible.builtin.shell: |
+#       echo "Updates installed on {{ inventory_hostname }} require a reboot." | mail -s "Reboot Required on {{ inventory_hostname }}" youremail@example.com
+#     when: reboot_required.stat.exists
