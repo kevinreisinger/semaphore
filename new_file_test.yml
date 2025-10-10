@@ -2,9 +2,9 @@
   hosts: windows
   gather_facts: false
   tasks:
-    - name: Ensure C:\temp folder exists
+    - name: Ensure C:\Temp folder exists
       win_file:
-        path: C:\temp
+        path: C:\Temp
         state: directory
 
     - name: Create test file via PowerShell (overwrite if exists)
