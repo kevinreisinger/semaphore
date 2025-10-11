@@ -1,0 +1,36 @@
+---
+- name: Copy folder from UNC share to Windows hosts
+  hosts: windows
+  gather_facts: no
+
+  vars:
+    source_unc_folder: "\\\\kevireis-home\\i$\\Applications\\Telnet Clients\\Putty"  # Source folder
+    dest_folder: "C:\\Windows\\TelnetClients\\Putty"                                  # Destination folder
+    share_username: "kevireis-home\\Administrator"                                    # UNC credentials
+    share_password: "YourPasswordHere"                                               # Use Vault in production
+
+  tasks:
+    - name: "Copy folder from UNC share using PowerShell"
+      win_shell: |
+        $User = "{{ share_username }}"
+        $Pass = ConvertTo-SecureString "{{ share_password }}" -AsPlainText -Force
+        $Cred = New-Object System.Management.Automation.PSCredential($User,$Pass)
+
+        $Source = "{{ source_unc_folder }}"
+        $Destination = "{{ dest_folder }}"
+
+        # Map the share temporarily
+        net use \\kevireis-home\i$ $($Cred.GetNetworkCredential().Password) /user:$($Cred.UserName) /persistent:no
+
+        # Create destination folder if it doesn't exist
+        if (!(Test-Path $Destination)) {
+            New-Item -ItemType Directory -Path $Destination | Out-Null
+        }
+
+        # Copy folder recursively and overwrite existing files
+        Copy-Item -Path $Source\* -Destination $Destination -Recurse -Force
+
+        # Remove the mapping
+        net use \\kevireis-home\i$ /delete
+      args:
+        executable: powershell
