@@ -11,7 +11,7 @@
     share_password:
 
   tasks:
-    - name: Map network drive Z:
+    - name: "Map network drive Z:"
       win_shell: |
         $User = "{{ share_username }}"
         $Pass = ConvertTo-SecureString "{{ share_password }}" -AsPlainText -Force
