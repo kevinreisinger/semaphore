@@ -1,5 +1,5 @@
 ---
-- name: Copy PuTTY.exe from UNC share to Windows hosts
+- name: Install Putty
   hosts: windows
   gather_facts: no
 
