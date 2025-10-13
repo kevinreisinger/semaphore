@@ -1,7 +1,14 @@
 ---
-- name: Test Windows connectivity
+- name: Ping Test (Windows)
   hosts: windows
   gather_facts: no
   tasks:
     - name: Ping test
       win_ping:
+
+- name: Ping Test (Linux)
+  hosts: linux
+  gather_facts: no
+  tasks:
+    - name: Ping Linux hosts
+      ping:
