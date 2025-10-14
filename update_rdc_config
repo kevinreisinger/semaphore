@@ -4,20 +4,20 @@
   gather_facts: no
 
   vars:
-    putty_remote_path: "C:\\Windows\\putty.exe"
-    putty_unc_path: "\\\\kevireis-home\\i$\\Applications\\Utilities\\Sysinternals\\Remote Desktop Connection Manager\\Reisingers LAN.rdg"
+    rdc_config_remote_path: "$env:USERPROFILE\Documents\Reisingers LAN.rdg"
+    rdc_config_unc_path: "\\\\kevireis-home\\i$\\Applications\\Utilities\\Sysinternals\\Remote Desktop Connection Manager\\Reisingers LAN.rdg"
     share_username: 
     share_password: 
 
   tasks:
-    - name: "Copy PuTTY.exe from UNC share using PowerShell"
+    - name: "Copy RDC Config File from UNC share using PowerShell"
       win_shell: |
         $User = "{{ share_username }}"
         $Pass = ConvertTo-SecureString "{{ share_password }}" -AsPlainText -Force
         $Cred = New-Object System.Management.Automation.PSCredential($User,$Pass)
 
-        $Source = "{{ putty_unc_path }}"
-        $Destination = "{{ putty_remote_path }}"
+        $Source = "{{ rdc_config_unc_path }}"
+        $Destination = "{{ rdc_config_remote_path }}"
 
         # Map the share temporarily
         net use \\kevireis-home\i$ $($Cred.GetNetworkCredential().Password) /user:$($Cred.UserName) /persistent:no
