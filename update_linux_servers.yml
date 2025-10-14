@@ -6,7 +6,7 @@
 
   vars:
     email_to: "kevinreisinger@gmail.com"
-    temp_summary: "/tmp/update_summary.txt"
+    temp_summary: "/tmp/linux_update_summary.txt"
     reboot_required_hosts: []
 
   tasks:
