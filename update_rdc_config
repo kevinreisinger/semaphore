@@ -5,7 +5,7 @@
 
   vars:
     putty_remote_path: "C:\\Windows\\putty.exe"
-    putty_unc_path: "\\\\kevireis-home\\i$\\Applications\\Telnet Clients\\Putty\\v0.83\\putty.exe"
+    putty_unc_path: "\\\\kevireis-home\\i$\\Applications\\Utilities\\Sysinternals\\Remote Desktop Connection Manager\\Reisingers LAN.rdg"
     share_username: 
     share_password: 
 
