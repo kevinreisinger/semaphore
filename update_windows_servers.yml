@@ -1,14 +1,17 @@
 ---
-- name: Update Windows Servers
+- name: Windows Updates with Email Notification (no reboot)
   hosts: windows
   gather_facts: no
-
   vars:
     email_to: "kevinreisinger@gmail.com"
-    temp_summary: "/tmp/windows_reboot_summary.txt"
-    reboot_required_hosts: []
+    temp_summary: "C:\\Temp\\windows_update_summary.txt"
 
   tasks:
+    - name: Ensure Temp directory exists
+      win_file:
+        path: C:\Temp
+        state: directory
+
     - name: Run Windows Updates (no reboot)
       win_updates:
         category_names:
@@ -18,34 +21,61 @@
         reboot: no
       register: update_result
 
-    - name: Mark host as requiring reboot (if needed)
-      set_fact:
-        reboot_required: "{{ update_result.reboot_required }}"
-      when: update_result.reboot_required | bool
+    - name: Debug - show update result
+      debug:
+        var: update_result
 
-    - name: Add this host to the global reboot-required list
+    - name: Determine if reboot required or if updates failed with HRESULT 0
+      set_fact:
+        reboot_required: "{{ update_result.reboot_required | default(false) or (update_result.failed_update_count | default(0) > 0) }}"
+
+    - name: Build summary file on Windows
+      win_shell: |
+        $SummaryPath = "{{ temp_summary }}"
+        "Windows Update Summary for {{ ansible_hostname }}" | Out-File -FilePath $SummaryPath
+        "" | Out-File -FilePath $SummaryPath -Append
+        "Installed updates:" | Out-File -FilePath $SummaryPath -Append
+        foreach ($u in {{ update_result.updates | to_json | from_json }}.GetEnumerator()) {
+          if ($u.Value.installed -eq $true) {
+            " - $($u.Value.title) ($($u.Value.kb -join ', '))" | Out-File -FilePath $SummaryPath -Append
+          }
+        }
+        "" | Out-File -FilePath $SummaryPath -Append
+        "Failed updates:" | Out-File -FilePath $SummaryPath -Append
+        foreach ($u in {{ update_result.updates | to_json | from_json }}.GetEnumerator()) {
+          if ($u.Value.installed -ne $true) {
+            " - $($u.Value.title) ($($u.Value.kb -join ', '))" | Out-File -FilePath $SummaryPath -Append
+          }
+        }
+        "" | Out-File -FilePath $SummaryPath -Append
+        "Reboot required: {{ reboot_required }}" | Out-File -FilePath $SummaryPath -Append
+      args:
+        executable: powershell
+
+    - name: Fetch summary file from Windows to Ansible controller
+      fetch:
+        src: "{{ temp_summary }}"
+        dest: "/tmp/windows_update_{{ inventory_hostname }}.txt"
+        flat: yes
+
+    - name: Collect reboot-required hosts
       set_fact:
         global_reboot_required_hosts: "{{ (global_reboot_required_hosts | default([])) + [inventory_hostname] }}"
-      when: reboot_required | default(false)
-      delegate_to: localhost
+      when: reboot_required | bool
       run_once: false
 
-- name: Send consolidated reboot summary email
-  hosts: localhost
-  gather_facts: false
-  vars:
-    email_to: "you@yourdomain.com"
-    temp_summary: "/tmp/windows_reboot_summary.txt"
-
-  tasks:
-    - name: Send email if any Windows hosts require reboot
+    - name: Send email if any hosts require reboot
+      delegate_to: localhost
+      run_once: true
+      vars:
+        summary_files: "{{ lookup('fileglob', '/tmp/windows_update_*.txt', wantlist=True) }}"
       ansible.builtin.shell: |
-        echo "⚠️ The following Windows servers require a reboot after updates:" > {{ temp_summary }}
-        echo "" >> {{ temp_summary }}
-        for host in {{ global_reboot_required_hosts | join(' ') }}; do
-          echo " - $host" >> {{ temp_summary }}
+        echo "⚠️ The following Windows servers require a reboot after updates:" > /tmp/windows_reboot_summary.txt
+        echo "" >> /tmp/windows_reboot_summary.txt
+        for f in {{ summary_files | join(' ') }}; do
+          echo "---- $(basename $f .txt | sed 's/windows_update_//')" >> /tmp/windows_reboot_summary.txt
+          cat "$f" >> /tmp/windows_reboot_summary.txt
+          echo "" >> /tmp/windows_reboot_summary.txt
         done
-        echo "" >> {{ temp_summary }}
-        echo "Triggered on {{ ansible_date_time.date }}" >> {{ temp_summary }}
-        mail -s "⚠️ Windows Servers Reboot Required" {{ email_to }} < {{ temp_summary }}
+        mail -s "⚠️ Windows Servers Reboot Required" {{ email_to }} < /tmp/windows_reboot_summary.txt
       when: global_reboot_required_hosts | length > 0
