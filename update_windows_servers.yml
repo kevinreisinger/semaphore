@@ -1,0 +1,50 @@
+---
+- name: Update Windows Servers
+  hosts: windows
+  gather_facts: no
+
+  vars:
+    email_to: "you@yourdomain.com"
+    temp_summary: "/tmp/windows_reboot_summary.txt"
+
+  tasks:
+    - name: Run Windows Updates (no reboot)
+      win_updates:
+        category_names:
+          - SecurityUpdates
+          - CriticalUpdates
+          - UpdateRollups
+        reboot: no
+      register: update_result
+
+    - name: Mark host as requiring reboot (if needed)
+      set_fact:
+        reboot_required: "{{ update_result.reboot_required }}"
+      when: update_result.reboot_required | bool
+
+    - name: Add this host to the global reboot-required list
+      set_fact:
+        global_reboot_required_hosts: "{{ (global_reboot_required_hosts | default([])) + [inventory_hostname] }}"
+      when: reboot_required | default(false)
+      delegate_to: localhost
+      run_once: false
+
+- name: Send consolidated reboot summary email
+  hosts: localhost
+  gather_facts: false
+  vars:
+    email_to: "you@yourdomain.com"
+    temp_summary: "/tmp/windows_reboot_summary.txt"
+
+  tasks:
+    - name: Send email if any Windows hosts require reboot
+      ansible.builtin.shell: |
+        echo "⚠️ The following Windows servers require a reboot after updates:" > {{ temp_summary }}
+        echo "" >> {{ temp_summary }}
+        for host in {{ global_reboot_required_hosts | join(' ') }}; do
+          echo " - $host" >> {{ temp_summary }}
+        done
+        echo "" >> {{ temp_summary }}
+        echo "Triggered on {{ ansible_date_time.date }}" >> {{ temp_summary }}
+        mail -s "⚠️ Windows Servers Reboot Required" {{ email_to }} < {{ temp_summary }}
+      when: global_reboot_required_hosts | length > 0
