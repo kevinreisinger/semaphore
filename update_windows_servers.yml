@@ -4,7 +4,7 @@
   gather_facts: no
 
   vars:
-    email_to: "you@yourdomain.com"
+    email_to: "kevinreisinger@gmail.com"
     temp_summary: "/tmp/windows_reboot_summary.txt"
 
   tasks:
