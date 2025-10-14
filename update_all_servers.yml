@@ -3,7 +3,7 @@
   hosts: all
   gather_facts: no
   vars:
-    email_to: "admin@reisingers.com"
+    email_to: "kevinreisinger@gmail.com"
     temp_summary_windows: "C:\\Temp\\windows_update_summary.txt"
     temp_summary_linux: "/tmp/linux_update_summary.txt"
     global_reboot_required_hosts: []
