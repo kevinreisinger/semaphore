@@ -1,0 +1,29 @@
+---
+- name: Create test file on Windows
+  hosts: windows
+  gather_facts: false
+  tasks:
+    - name: Ensure C:\Temp folder exists
+      win_file:
+        path: C:\Temp
+        state: directory
+
+    - name: Create test file via PowerShell (overwrite if exists)
+      win_shell: |
+        New-Item -Path "C:\temp\testfile.txt" -ItemType File -Value "Hello again and again from Semaphore!" -Force
+
+
+- name: Copy file to Linux servers
+  hosts: linux
+  gather_facts: false
+  tasks:
+    - name: Ensure /tmp directory exists
+      file:
+        path: /tmp
+        state: directory
+
+    - name: Copy test file to Linux servers
+      copy:
+        content: "Hello again and again from Semaphore (Linux version)!"
+        dest: /tmp/testfile.txt
+        mode: '0644'
