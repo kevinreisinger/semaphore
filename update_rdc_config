@@ -1,0 +1,31 @@
+---
+- name: Update RDC Config
+  hosts: windows
+  gather_facts: no
+
+  vars:
+    putty_remote_path: "C:\\Windows\\putty.exe"
+    putty_unc_path: "\\\\kevireis-home\\i$\\Applications\\Telnet Clients\\Putty\\v0.83\\putty.exe"
+    share_username: 
+    share_password: 
+
+  tasks:
+    - name: "Copy PuTTY.exe from UNC share using PowerShell"
+      win_shell: |
+        $User = "{{ share_username }}"
+        $Pass = ConvertTo-SecureString "{{ share_password }}" -AsPlainText -Force
+        $Cred = New-Object System.Management.Automation.PSCredential($User,$Pass)
+
+        $Source = "{{ putty_unc_path }}"
+        $Destination = "{{ putty_remote_path }}"
+
+        # Map the share temporarily
+        net use \\kevireis-home\i$ $($Cred.GetNetworkCredential().Password) /user:$($Cred.UserName) /persistent:no
+
+        # Copy the file, overwrite if it exists
+        Copy-Item -Path $Source -Destination $Destination -Force
+
+        # Remove the mapping
+        net use \\kevireis-home\i$ /delete
+      args:
+        executable: powershell
