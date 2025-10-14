@@ -4,7 +4,7 @@
   gather_facts: no
 
   vars:
-    rdc_config_remote_path: "USERPROFILE\\Documents\\Reisingers LAN.rdg"
+    rdc_config_remote_path: "$env:USERPROFILE\\Documents\\Reisingers LAN.rdg"
     rdc_config_unc_path: "\\\\kevireis-home\\i$\\Applications\\Utilities\\Sysinternals\\Remote Desktop Connection Manager\\Reisingers LAN.rdg"
     share_username: 
     share_password: 
