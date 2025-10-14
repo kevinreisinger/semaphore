@@ -6,6 +6,7 @@
   vars:
     email_to: "kevinreisinger@gmail.com"
     temp_summary: "/tmp/windows_reboot_summary.txt"
+    reboot_required_hosts: []
 
   tasks:
     - name: Run Windows Updates (no reboot)
