@@ -16,7 +16,7 @@
         $Cred = New-Object System.Management.Automation.PSCredential($User, $Pass)
 
         $Source = "{{ rdc_config_unc_path }}"
-        $Destination = "$env:USERPROFILE\\Documents\\Reisingers LAN.rdg"
+        $Destination = "c:\\users\\kevireis\\Documents\\Reisingers LAN.rdg"
 
         Write-Host "Copying file from $Source to $Destination..."
 
