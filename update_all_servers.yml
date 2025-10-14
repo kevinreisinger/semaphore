@@ -1,0 +1,113 @@
+---
+- name: Run updates on Linux and Windows, then email summary
+  hosts: all
+  gather_facts: no
+  vars:
+    email_to: "admin@reisingers.com"
+    temp_summary_windows: "C:\\Temp\\windows_update_summary.txt"
+    temp_summary_linux: "/tmp/linux_update_summary.txt"
+    global_reboot_required_hosts: []
+
+  tasks:
+    # --- WINDOWS SECTION ---
+    - name: Windows | Ensure C:\Temp exists
+      win_file:
+        path: C:\Temp
+        state: directory
+      when: ansible_os_family == 'Windows'
+
+    - name: Windows | Run Windows Updates
+      win_updates:
+        category_names:
+          - SecurityUpdates
+          - CriticalUpdates
+          - UpdateRollups
+        reboot: no
+      register: win_update_result
+      when: ansible_os_family == 'Windows'
+
+    - name: Windows | Determine if reboot required or updates failed
+      set_fact:
+        reboot_required: "{{ win_update_result.reboot_required | default(false) or (win_update_result.failed_update_count | default(0) > 0) }}"
+      when: ansible_os_family == 'Windows'
+
+    - name: Windows | Build summary file
+      win_shell: |
+        $SummaryPath = "{{ temp_summary_windows }}"
+        "Windows Update Summary for {{ ansible_hostname }}" | Out-File -FilePath $SummaryPath
+        "" | Out-File -FilePath $SummaryPath -Append
+        "Installed updates:" | Out-File -FilePath $SummaryPath -Append
+        foreach ($u in {{ win_update_result.updates | to_json | from_json }}.GetEnumerator()) {
+          if ($u.Value.installed -eq $true) {
+            " - $($u.Value.title) ($($u.Value.kb -join ', '))" | Out-File -FilePath $SummaryPath -Append
+          }
+        }
+        "" | Out-File -FilePath $SummaryPath -Append
+        "Failed updates:" | Out-File -FilePath $SummaryPath -Append
+        foreach ($u in {{ win_update_result.updates | to_json | from_json }}.GetEnumerator()) {
+          if ($u.Value.installed -ne $true) {
+            " - $($u.Value.title) ($($u.Value.kb -join ', '))" | Out-File -FilePath $SummaryPath -Append
+          }
+        }
+        "" | Out-File -FilePath $SummaryPath -Append
+        "Reboot required: {{ reboot_required }}" | Out-File -FilePath $SummaryPath -Append
+      args:
+        executable: powershell
+      when: ansible_os_family == 'Windows'
+
+    - name: Windows | Fetch summary
+      fetch:
+        src: "{{ temp_summary_windows }}"
+        dest: "/tmp/windows_update_{{ inventory_hostname }}.txt"
+        flat: yes
+      when: ansible_os_family == 'Windows'
+
+    # --- LINUX SECTION ---
+    - name: Linux | Run updates
+      ansible.builtin.shell: |
+        apt-get update -qq && apt-get upgrade -y -qq
+      register: linux_update_result
+      when: ansible_os_family != 'Windows'
+
+    - name: Linux | Check if reboot required
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_flag
+      when: ansible_os_family != 'Windows'
+
+    - name: Linux | Write update summary
+      ansible.builtin.shell: |
+        echo "Linux Update Summary for {{ ansible_hostname }}" > {{ temp_summary_linux }}
+        echo "" >> {{ temp_summary_linux }}
+        echo "Reboot required: {{ reboot_flag.stat.exists | bool }}" >> {{ temp_summary_linux }}
+      when: ansible_os_family != 'Windows'
+
+    - name: Linux | Fetch summary
+      fetch:
+        src: "{{ temp_summary_linux }}"
+        dest: "/tmp/linux_update_{{ inventory_hostname }}.txt"
+        flat: yes
+      when: ansible_os_family != 'Windows'
+
+    # --- COLLECT REBOOTS ---
+    - name: Collect reboot-required hosts
+      set_fact:
+        global_reboot_required_hosts: "{{ (global_reboot_required_hosts | default([])) + [inventory_hostname] }}"
+      when: (reboot_required | default(false)) or (reboot_flag.stat.exists | default(false))
+
+    # --- SEND SUMMARY EMAIL ---
+    - name: Send email if any hosts require reboot
+      delegate_to: localhost
+      run_once: true
+      vars:
+        summary_files: "{{ lookup('fileglob', '/tmp/*_update_*.txt', wantlist=True) }}"
+      ansible.builtin.shell: |
+        echo "⚠️ The following servers require a reboot after updates:" > /tmp/all_update_summary.txt
+        echo "" >> /tmp/all_update_summary.txt
+        for f in {{ summary_files | join(' ') }}; do
+          echo "---- $(basename $f .txt | sed 's/_update_//')" >> /tmp/all_update_summary.txt
+          cat "$f" >> /tmp/all_update_summary.txt
+          echo "" >> /tmp/all_update_summary.txt
+        done
+        mail -s "⚠️ Servers Require Reboot After Updates" {{ email_to }} < /tmp/all_update_summary.txt
+      when: global_reboot_required_hosts | length > 0
