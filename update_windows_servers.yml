@@ -35,9 +35,7 @@
         "Windows Update Summary for $env:COMPUTERNAME" | Out-File -FilePath $SummaryPath
         "" | Out-File -FilePath $SummaryPath -Append
 
-        $updateJson = @'
-{{ update_result.updates | to_json }}
-'@
+        $updateJson = {{ update_result.updates | to_json | quote }}
         $updates = $updateJson | ConvertFrom-Json
 
         if ($updates.PSObject.Properties.Count -gt 0) {
@@ -57,7 +55,6 @@
 
         "" | Out-File -FilePath $SummaryPath -Append
 
-        # Reboot logic
         $SkipReboot = @({{ skip_reboot_servers | map('quote') | join(', ') }})
         if ($SkipReboot -contains "{{ inventory_hostname }}") {
             if ({{ update_result.reboot_required | lower }}) {
