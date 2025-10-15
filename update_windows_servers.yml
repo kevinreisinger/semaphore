@@ -1,7 +1,7 @@
 ---
 - name: Windows Updates with Auto Reboot (skip specified hosts)
   hosts: all
-  gather_facts: false
+  gather_facts: no
   vars:
     temp_dir: C:/Temp
     skip_servers:
@@ -19,19 +19,20 @@
 
     - name: Skip patching/reboot if host is in skip_servers
       debug:
-        msg: "Skipping host {{ inventory_hostname }}"
+        msg: "Skipping updates for {{ inventory_hostname }}"
       when: inventory_hostname in skip_servers
+      register: skip_result
 
     - name: Install all available updates
       win_updates:
         category_names:
           - SecurityUpdates
-          - UpdateRollups
+          - CriticalUpdates
         reboot: yes
       register: update_result
       when: inventory_hostname not in skip_servers
 
-    - name: Create per-host update summary file locally and on share
+    - name: Write update summary locally and to share
       win_shell: |
         $SummaryPathLocal = "{{ temp_dir }}/{{ inventory_hostname }}_windows_update_summary.txt"
         $SummaryPathShare = "{{ share_unc_path }}/{{ inventory_hostname }}_windows_update_summary.txt"
@@ -50,7 +51,9 @@
         if ($updates.PSObject.Properties.Count -gt 0) {
             foreach ($u in $updates.PSObject.Properties) {
                 if ($u.Value.installed -eq $true) {
+                    {% raw %}
                     " - $($u.Value.title) ($($u.Value.kb -join ', '))" | Out-File -FilePath $SummaryPathLocal -Append
+                    {% endraw %}
                 }
             }
         } else {
@@ -62,14 +65,18 @@
         if ($updates.PSObject.Properties.Count -gt 0) {
             foreach ($u in $updates.PSObject.Properties) {
                 if ($u.Value.installed -ne $true) {
+                    {% raw %}
                     " - $($u.Value.title) ($($u.Value.kb -join ', '))" | Out-File -FilePath $SummaryPathLocal -Append
+                    {% endraw %}
                 }
             }
         } else {
             " - None" | Out-File -FilePath $SummaryPathLocal -Append
         }
 
+        {% raw %}
         "Reboot required: $($update_result.reboot_required -eq $true)" | Out-File -FilePath $SummaryPathLocal -Append
+        {% endraw %}
 
         if ("{{ share_unc_path }}" -ne "") {
             try {
