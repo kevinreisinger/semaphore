@@ -1,7 +1,7 @@
 ---
 - name: Windows Updates with Email Notification (no reboot)
   hosts: windows
-  gather_facts: no
+  gather_facts: yes
   vars:
     email_to: "kevinreisinger@gmail.com"
     temp_summary: "C:\\Temp\\windows_update_summary.txt"
