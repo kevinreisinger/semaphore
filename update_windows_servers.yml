@@ -18,6 +18,9 @@
         category_names:
           - SecurityUpdates
           - CriticalUpdates
+          - Definition Updates
+          - Windows Defender
+          - Drivers
           - UpdateRollups
         reboot: no
       register: update_result
