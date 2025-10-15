@@ -5,48 +5,53 @@
   vars:
     skip_servers:
       - dc08.reisingers.com
-      - kevireis-vc2.reisingers.com
+    temp_dir: "C:\\Temp"
     share_unc_path: "\\\\kevireis-home\\i$\\Documents\\Kevin\\Network Documentation\\Server Updates\\"
     share_username: ""
     share_password: ""
 
   tasks:
+
     - name: Ensure Temp directory exists
       win_file:
-        path: C:\Temp
+        path: "{{ temp_dir }}"
         state: directory
 
     - name: Skip patching/reboot if host is in skip_servers
       debug:
-        msg: "Host {{ inventory_hostname }} is in skip_servers, skipping updates and reboot"
+        msg: "Skipping patching and reboot for {{ inventory_hostname }}"
       when: inventory_hostname in skip_servers
 
     - name: Install all available updates
       win_updates:
         category_names:
-          - "CriticalUpdates"
-          - "SecurityUpdates"
-          - "Definition Updates"
-          - "Windows Defender"
-          - "UpdateRollups"
-          - "FeaturePacks"
-          - "ServicePacks"
-          - "Tools"
-          - "Updates"
-          - "Drivers"
+          - SecurityUpdates
+          - CriticalUpdates
+          - Definition Updates
+          - Windows Defender
+          - Drivers
+          - UpdateRollups
+          - FeaturePacks
+          - ServicePacks
+          - Tools
+          - Updates
         reboot: no
       register: update_result
       when: inventory_hostname not in skip_servers
 
-    - name: Create per-host update summary file
+    - name: Create per-host update summary file (local + share)
       win_shell: |
-        $SummaryPathLocal = "C:\Temp\{{ inventory_hostname }}_windows_update_summary.txt"
+        $SummaryPathLocal = "{{ temp_dir }}\{{ inventory_hostname }}_windows_update_summary.txt"
         $SummaryPathShare = "{{ share_unc_path }}\{{ inventory_hostname }}_windows_update_summary.txt"
 
         "Windows Update Summary for {{ inventory_hostname }}" | Out-File $SummaryPathLocal
         "" | Out-File $SummaryPathLocal -Append
 
-        $updates = {{ update_result.updates | to_json | quote }} | ConvertFrom-Json
+        $jsonUpdates = @'
+{{ update_result.updates | to_nice_json }}
+'@
+
+        $updates = $jsonUpdates | ConvertFrom-Json
 
         "Installed updates:" | Out-File $SummaryPathLocal -Append
         if ($updates) {
@@ -85,7 +90,10 @@
         executable: powershell
       when: inventory_hostname not in skip_servers
 
-    - name: Reboot if required (skip_servers excluded)
+    - name: Reboot if required (skip skip_servers)
       win_reboot:
-        reboot_timeout: 600
-      when: inventory_hostname not in skip_servers and update_result.reboot_required | default(false)
+        reboot_timeout: 1800
+      when:
+        - inventory_hostname not in skip_servers
+        - update_result.reboot_required | bool
+
