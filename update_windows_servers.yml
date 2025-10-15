@@ -15,7 +15,7 @@
 
     - name: Ensure Temp directory exists
       win_file:
-        path: C:\\Temp
+        path: C:\Temp
         state: directory
 
     - name: Skip patching/reboot if host is in skip_servers
@@ -84,7 +84,7 @@
 
         # Installed updates
         "Installed updates:" | Out-File -FilePath $SummaryPath -Append
-        $updates = @{}
+        $updates = @{ }
         try { $updates = $UpdatesJson | ConvertFrom-Json } catch {}
         if ($updates -and $updates.PSObject.Properties.Count -gt 0) {
             foreach ($u in $updates.PSObject.Properties) {
@@ -121,12 +121,12 @@
       args:
         executable: powershell
       vars:
-        LocalPath: "C:\\Temp"
+        LocalPath: "C:\Temp"
         SharePath: "{{ share_unc_path }}"
         User: "{{ share_username | default('') }}"
         Pass: "{{ share_password | default('') }}"
         CleanupDays: "{{ cleanup_days }}"
-        UpdatesJson: "{{ update_result.updates | default({}) | to_json | replace('\n','') | replace('\'','\'\'') }}"
+        UpdatesJson: '{{ update_result.updates | default({}) | to_json | replace("\n","") | replace("\'","\'\'") }}'
       when: inventory_hostname not in skip_servers
 
     - name: Reboot if required (skip_servers excluded)
