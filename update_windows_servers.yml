@@ -5,6 +5,7 @@
   vars:
     skip_servers:
       - dc08.reisingers.com
+      - kevireis-vc2.reisingers.com
     temp_summary: "C:\\Temp\\windows_update_summary.txt"
 
   tasks:
