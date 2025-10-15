@@ -73,8 +73,8 @@
         "" | Out-File -FilePath $SummaryPath -Append
         "Summary file saved to: $SummaryPath" | Out-File -FilePath $SummaryPath -Append
 
-        # Output the file path so Ansible can fetch it
-        Write-Output $SummaryPath
+        # Output the file path without trailing newline
+        $SummaryPath.Trim()
       args:
         executable: powershell
       register: host_summary_path
