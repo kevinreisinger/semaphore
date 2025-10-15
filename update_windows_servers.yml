@@ -72,6 +72,9 @@
 
         "" | Out-File -FilePath $SummaryPath -Append
         "Summary file saved to: $SummaryPath" | Out-File -FilePath $SummaryPath -Append
+
+        # Output the file path so Ansible can fetch it
+        Write-Output $SummaryPath
       args:
         executable: powershell
       register: host_summary_path
@@ -84,7 +87,7 @@
 
     - name: Fetch host summary file to controller
       fetch:
-        src: "{{ host_summary_path.stdout | default('C:\\Temp\\windows_update_summary_*.txt') }}"
+        src: "{{ host_summary_path.stdout }}"
         dest: "/tmp/windows_updates_{{ inventory_hostname }}.txt"
         flat: yes
 
