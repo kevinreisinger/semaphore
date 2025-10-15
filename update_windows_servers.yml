@@ -85,9 +85,9 @@
       run_once: false
 
 # ------------------------------------------------
-# Separate local play on the controller to send email
+# Separate task delegated to a real Linux host for sending email
 # ------------------------------------------------
-- name: Send reboot email from controller
+- name: Send reboot email from Linux controller
   hosts: controller
   gather_facts: no
   tasks:
