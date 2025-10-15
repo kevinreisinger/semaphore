@@ -1,14 +1,31 @@
 ---
-- name: Windows Updates with Auto Reboot
+- name: Windows Updates with Auto Reboot (skip specified hosts)
   hosts: all
   gather_facts: no
   vars:
-    skip_reboot_servers:
+    skip_servers:
       - dc08.reisingers.com
-      # Add more servers here
+      # Add more hosts here
     temp_summary_dir: "C:\\Temp"
 
   tasks:
+
+    - name: Ensure Temp directory exists
+      win_file:
+        path: "{{ temp_summary_dir }}"
+        state: directory
+
+    - name: Skip patching/reboot if host is in skip_servers
+      win_shell: |
+        $Timestamp = (Get-Date).ToString("yyyy-MM-dd_HH-mm-ss")
+        $SummaryPath = Join-Path "{{ temp_summary_dir }}" "windows_update_summary_$env:COMPUTERNAME`_$Timestamp.txt"
+        "Updates skipped for this host: $env:COMPUTERNAME" | Out-File -FilePath $SummaryPath
+        "Timestamp: $Timestamp" | Out-File -FilePath $SummaryPath -Append
+        $SummaryPath.Trim()
+      args:
+        executable: powershell
+      when: inventory_hostname in skip_servers
+      register: host_summary_path
 
     - name: Install all available updates
       win_updates:
@@ -25,14 +42,15 @@
           - Updates
         reboot: no
       register: update_result
+      when: inventory_hostname not in skip_servers
 
     - name: Create per-host update summary file
       win_shell: |
         $Timestamp = (Get-Date).ToString("yyyy-MM-dd_HH-mm-ss")
-        $SummaryPath = Join-Path "{{ temp_summary_dir }}" "windows_update_summary_$Timestamp.txt"
-        New-Item -ItemType Directory -Force -Path "{{ temp_summary_dir }}" | Out-Null
+        $SummaryPath = Join-Path "{{ temp_summary_dir }}" "windows_update_summary_$env:COMPUTERNAME`_$Timestamp.txt"
 
         "Windows Update Summary for $env:COMPUTERNAME" | Out-File -FilePath $SummaryPath
+        "Timestamp: $Timestamp" | Out-File -FilePath $SummaryPath -Append
         "" | Out-File -FilePath $SummaryPath -Append
 
         "Installed updates:" | Out-File -FilePath $SummaryPath -Append
@@ -56,29 +74,16 @@
         }
 
         "" | Out-File -FilePath $SummaryPath -Append
-
-        $SkipReboot = @({{ skip_reboot_servers | map('quote') | join(', ') }})
-        if ($SkipReboot -contains "{{ inventory_hostname }}") {
-            if ({{ update_result.reboot_required | lower }}) {
-                "⚠️ Reboot skipped (skip_reboot_servers)" | Out-File -FilePath $SummaryPath -Append
-            } else {
-                "✅ No reboot needed." | Out-File -FilePath $SummaryPath -Append
-            }
-        } else {
-            if ({{ update_result.reboot_required | lower }}) {
-                "⚠️ System will reboot automatically." | Out-File -FilePath $SummaryPath -Append
-            } else {
-                "✅ No reboot needed." | Out-File -FilePath $SummaryPath -Append
-            }
-        }
-
+        $RebootText = if ({{ update_result.reboot_required | lower }}) { "⚠️ Reboot required" } else { "✅ No reboot needed" }
+        $RebootText | Out-File -FilePath $SummaryPath -Append
         $SummaryPath.Trim()
       args:
         executable: powershell
       register: host_summary_path
+      when: inventory_hostname not in skip_servers
 
-    - name: Reboot if required (skip_reboot_servers excluded)
+    - name: Reboot if required (skip_servers excluded)
       win_reboot:
       when:
         - update_result.reboot_required
-        - inventory_hostname not in skip_reboot_servers
+        - inventory_hostname not in skip_servers
