@@ -3,90 +3,88 @@
   hosts: all
   gather_facts: no
   vars:
-    temp_dir: "C:\\Temp"
-    share_unc_path: "\\\\kevireis-home\\i$\\Documents\\Kevin\\Network Documentation\\Server Updates\\"
-    share_username: ""
-    share_password: ""
+    temp_dir: C:\Temp
     skip_servers:
       - dc08.reisingers.com
       - kevireis-vc2.reisingers.com
+    share_unc_path: "\\\\kevireis-home\\i$\\Documents\\Kevin\\Network Documentation\\Server Updates\\"
+    share_username: ""
+    share_password: ""
 
   tasks:
+    - name: Ensure Temp directory exists
+      win_file:
+        path: "{{ temp_dir }}"
+        state: directory
 
-  - name: Ensure Temp directory exists
-    win_file:
-      path: "{{ temp_dir }}"
-      state: directory
+    - name: Determine if host should be skipped
+      set_fact:
+        skip_this_host: "{{ inventory_hostname in skip_servers }}"
 
-  - name: Skip patching/reboot if host is in skip_servers
-    set_fact:
-      skip_this_host: true
-    when: inventory_hostname in skip_servers
+    - name: Skip patching/reboot if host is in skip_servers
+      debug:
+        msg: "Skipping {{ inventory_hostname }}"
+      when: skip_this_host
 
-  - name: Install all available updates
-    win_updates:
-      category_names:
-        - SecurityUpdates
-        - UpdateRollups
-        - CriticalUpdates
-      state: installed
-    register: update_result
-    when: not skip_this_host
+    - name: Install all available updates
+      win_updates:
+        category_names:
+          - SecurityUpdates
+          - CriticalUpdates
+          - UpdateRollups
+        reboot: no
+      register: update_result
+      when: not skip_this_host
 
-  - name: Reboot if required (skip_servers excluded)
-    win_reboot:
-      reboot_timeout: 600
-    when:
-      - not skip_this_host
-      - update_result.reboot_required | default(false)
+    - name: Reboot if required (skip_servers excluded)
+      win_reboot:
+      when:
+        - not skip_this_host
+        - update_result.reboot_required | default(false)
 
-  - name: Create per-host update summary file locally and on share
-    win_shell: |
-      $SummaryPathLocal = "{{ temp_dir }}\\{{ inventory_hostname }}_windows_update_summary.txt"
-      $SummaryPathShare = "{{ share_unc_path }}\\{{ inventory_hostname }}_windows_update_summary.txt"
+    - name: Create per-host update summary file locally and on share
+      win_shell: |
+        $SummaryPathLocal = "{{ temp_dir }}\\{{ inventory_hostname }}_windows_update_summary.txt"
+        $SummaryPathShare = "{{ share_unc_path }}\\{{ inventory_hostname }}_windows_update_summary.txt"
 
-      $updatesJson = '{{ update_result.updates | to_json | replace("'", "''") }}'
+        $updatesJson = '{{ update_result.updates | to_json | replace("'", "''") }}'
 
-      $script = @"
+        $script = @"
 Windows Update Summary for {{ inventory_hostname }}
 
 Installed updates:
-$updates = @{}
 if ($updatesJson -and $updatesJson -ne '{}') {
     $updates = $updatesJson | ConvertFrom-Json
-}
-
-if ($updates.PSObject.Properties.Count -gt 0) {
     foreach ($u in $updates.PSObject.Properties) {
         if ($u.Value.installed -eq $true) {
-            " - $($u.Value.title) ($($u.Value.kb -join ', '))"
+            Write-Output " - $($u.Value.title) ($($u.Value.kb -join ', '))"
         }
     }
 } else {
-    " - None"
+    Write-Output " - None"
 }
 
 Failed updates:
-if ($updates.PSObject.Properties.Count -gt 0) {
+if ($updatesJson -and $updatesJson -ne '{}') {
     foreach ($u in $updates.PSObject.Properties) {
         if ($u.Value.installed -ne $true) {
-            " - $($u.Value.title) ($($u.Value.kb -join ', '))"
+            Write-Output " - $($u.Value.title) ($($u.Value.kb -join ', '))"
         }
     }
 } else {
-    " - None"
+    Write-Output " - None"
 }
 
 Reboot required: $($update_result.reboot_required -eq $true)
 "@
 
-      $script | Out-File -FilePath $SummaryPathLocal -Encoding UTF8
+        $script | Out-File -FilePath $SummaryPathLocal -Encoding UTF8
 
-      if ("{{ share_unc_path }}" -ne "") {
-          try {
-              Copy-Item -Path $SummaryPathLocal -Destination $SummaryPathShare -Force
-          } catch {
-              Write-Host "⚠️ Unable to copy summary to share; left on local C:\\Temp"
-          }
-      }
-    when: not skip_this_host
+        if ("{{ share_unc_path }}" -ne "") {
+            try {
+                Copy-Item -Path $SummaryPathLocal -Destination $SummaryPathShare -Force
+            } catch {
+                Write-Host "⚠️ Unable to copy summary to share; left on local C:\Temp"
+            }
+        }
+      when: not skip_this_host
