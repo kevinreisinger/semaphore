@@ -55,7 +55,6 @@
         $LocalFallback = "C:\Temp"
         $TargetPath = $SharePath
 
-        # Connect to network share if credentials provided
         try {
           if ($User -and $Pass) {
             $SecurePass = ConvertTo-SecureString $Pass -AsPlainText -Force
@@ -70,22 +69,18 @@
           $TargetPath = $LocalFallback
         }
 
-        # Create dated subfolder
         $DatePath = Join-Path $TargetPath $DateFolder
         if (!(Test-Path $DatePath)) { New-Item -ItemType Directory -Path $DatePath -Force | Out-Null }
 
-        # Summary file
         $SummaryPath = Join-Path $DatePath "{{ inventory_hostname }}_$Timestamp.txt"
         "Windows Update Summary for {{ inventory_hostname }}" | Out-File -FilePath $SummaryPath
         "" | Out-File -FilePath $SummaryPath -Append
 
-        # Parse updates
         $updates = @{}
         if ($UpdatesJson -and $UpdatesJson -ne '{}') {
             try { $updates = $UpdatesJson | ConvertFrom-Json } catch {}
         }
 
-        # Installed updates
         "Installed updates:" | Out-File -FilePath $SummaryPath -Append
         if ($updates.PSObject.Properties.Count -gt 0) {
             foreach ($u in $updates.PSObject.Properties) {
@@ -95,7 +90,6 @@
             }
         } else { " - None" | Out-File -FilePath $SummaryPath -Append }
 
-        # Failed updates
         "" | Out-File -FilePath $SummaryPath -Append
         "Failed updates:" | Out-File -FilePath $SummaryPath -Append
         if ($updates.PSObject.Properties.Count -gt 0) {
@@ -109,7 +103,6 @@
         "" | Out-File -FilePath $SummaryPath -Append
         "Reboot required: {{ update_result.reboot_required | default(false) }}" | Out-File -FilePath $SummaryPath -Append
 
-        # Cleanup old folders
         try {
           $Cutoff = (Get-Date).AddDays(-$CleanupDays)
           Get-ChildItem -Path $TargetPath -Directory | Where-Object { $_.LastWriteTime -lt $Cutoff } | ForEach-Object {
@@ -120,10 +113,10 @@
         executable: powershell
       vars:
         SharePath: "{{ share_unc_path }}"
-        User: "{{ share_username | default('') }}"
-        Pass: "{{ share_password | default('') }}"
+        User: "{{ share_username }}"
+        Pass: "{{ share_password }}"
         CleanupDays: "{{ cleanup_days }}"
-        UpdatesJson: "{{ update_result.updates | default({}) | to_json | replace('\n','') | replace('\'','\'\'') }}"
+        UpdatesJson: "{{ update_result.updates | default({}) | to_json | quote }}"
       when: inventory_hostname not in skip_servers
 
     - name: Reboot if required (skip_servers excluded)
