@@ -22,12 +22,14 @@
           register: update_result
 
       rescue:
-        - name: Handle Windows Update failure
+        - name: Set empty update_result on failure
           set_fact:
             update_result:
               updates: {}
               failed_update_count: 0
               reboot_required: false
+
+        - name: Debug Windows Update failure
           debug:
             msg: "Windows Update task failed (likely Task Scheduler issue). Continuing playbook."
 
