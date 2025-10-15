@@ -40,83 +40,73 @@
       register: update_result
       when: inventory_hostname not in skip_servers
 
-    - name: Create per-host update summary file safely
+    - name: Create per-host update summary file locally and optionally on share
       win_shell: |
-        param(
-          [string]$SharePath,
-          [string]$User,
-          [string]$Pass,
-          [int]$CleanupDays,
-          [string]$UpdatesJson
-        )
-
         $Timestamp = Get-Date -Format "yyyy-MM-dd_HHmm"
         $DateFolder = Get-Date -Format "yyyy-MM-dd"
-        $LocalFallback = "C:\Temp"
-        $TargetPath = $SharePath
+        $LocalTemp = "C:\Temp"
+        $HostName = "{{ inventory_hostname }}"
+        $Updates = $update_result.updates
 
+        # Determine target path
+        $TargetPath = $LocalTemp
         try {
-          if ($User -and $Pass) {
-            $SecurePass = ConvertTo-SecureString $Pass -AsPlainText -Force
-            $Cred = New-Object System.Management.Automation.PSCredential($User, $SecurePass)
-            New-PSDrive -Name Z -PSProvider FileSystem -Root $SharePath -Credential $Cred -ErrorAction Stop | Out-Null
-            $TargetPath = "Z:"
-          } elseif (!(Test-Path $SharePath)) {
-            throw "Share path not accessible"
-          }
-        } catch {
-          Write-Host "⚠️ Unable to access $SharePath. Using local fallback path $LocalFallback"
-          $TargetPath = $LocalFallback
-        }
+            if ("{{ share_unc_path }}" -ne "") {
+                if ("{{ share_username }}" -ne "" -and "{{ share_password }}" -ne "") {
+                    $SecPass = ConvertTo-SecureString "{{ share_password }}" -AsPlainText -Force
+                    $Cred = New-Object System.Management.Automation.PSCredential("{{ share_username }}", $SecPass)
+                    New-PSDrive -Name Z -PSProvider FileSystem -Root "{{ share_unc_path }}" -Credential $Cred -ErrorAction Stop | Out-Null
+                    $TargetPath = "Z:"
+                } elseif (Test-Path "{{ share_unc_path }}") {
+                    $TargetPath = "{{ share_unc_path }}"
+                }
+            }
+        } catch { $TargetPath = $LocalTemp; Write-Host "⚠️ Could not access share. Using local C:\Temp" }
 
+        # Create dated folder
         $DatePath = Join-Path $TargetPath $DateFolder
         if (!(Test-Path $DatePath)) { New-Item -ItemType Directory -Path $DatePath -Force | Out-Null }
 
-        $SummaryPath = Join-Path $DatePath "{{ inventory_hostname }}_$Timestamp.txt"
-        "Windows Update Summary for {{ inventory_hostname }}" | Out-File -FilePath $SummaryPath
-        "" | Out-File -FilePath $SummaryPath -Append
+        # Summary file path
+        $SummaryFile = Join-Path $DatePath "$HostName`_$Timestamp.txt"
 
-        $updates = @{}
-        if ($UpdatesJson -and $UpdatesJson -ne '{}') {
-            try { $updates = $UpdatesJson | ConvertFrom-Json } catch {}
-        }
+        # Initialize summary
+        "Windows Update Summary for $HostName" | Out-File -FilePath $SummaryFile
+        "" | Out-File -FilePath $SummaryFile -Append
 
-        "Installed updates:" | Out-File -FilePath $SummaryPath -Append
-        if ($updates.PSObject.Properties.Count -gt 0) {
-            foreach ($u in $updates.PSObject.Properties) {
+        # Installed updates
+        "Installed updates:" | Out-File -FilePath $SummaryFile -Append
+        if ($Updates -and $Updates.PSObject.Properties.Count -gt 0) {
+            foreach ($u in $Updates.PSObject.Properties) {
                 if ($u.Value.installed -eq $true) {
-                    " - $($u.Value.title) (KB$($u.Value.kb -join ', KB'))" | Out-File -FilePath $SummaryPath -Append
+                    " - $($u.Value.title) (KB$($u.Value.kb -join ', KB'))" | Out-File -FilePath $SummaryFile -Append
                 }
             }
-        } else { " - None" | Out-File -FilePath $SummaryPath -Append }
+        } else { " - None" | Out-File -FilePath $SummaryFile -Append }
 
-        "" | Out-File -FilePath $SummaryPath -Append
-        "Failed updates:" | Out-File -FilePath $SummaryPath -Append
-        if ($updates.PSObject.Properties.Count -gt 0) {
-            foreach ($u in $updates.PSObject.Properties) {
+        # Failed updates
+        "" | Out-File -FilePath $SummaryFile -Append
+        "Failed updates:" | Out-File -FilePath $SummaryFile -Append
+        if ($Updates -and $Updates.PSObject.Properties.Count -gt 0) {
+            foreach ($u in $Updates.PSObject.Properties) {
                 if ($u.Value.installed -ne $true) {
-                    " - $($u.Value.title) (KB$($u.Value.kb -join ', KB'))" | Out-File -FilePath $SummaryPath -Append
+                    " - $($u.Value.title) (KB$($u.Value.kb -join ', KB'))" | Out-File -FilePath $SummaryFile -Append
                 }
             }
-        } else { " - None" | Out-File -FilePath $SummaryPath -Append }
+        } else { " - None" | Out-File -FilePath $SummaryFile -Append }
 
-        "" | Out-File -FilePath $SummaryPath -Append
-        "Reboot required: {{ update_result.reboot_required | default(false) }}" | Out-File -FilePath $SummaryPath -Append
+        "" | Out-File -FilePath $SummaryFile -Append
+        "Reboot required: $($update_result.reboot_required -eq $true)" | Out-File -FilePath $SummaryFile -Append
 
+        # Cleanup old folders
         try {
-          $Cutoff = (Get-Date).AddDays(-$CleanupDays)
-          Get-ChildItem -Path $TargetPath -Directory | Where-Object { $_.LastWriteTime -lt $Cutoff } | ForEach-Object {
-            Remove-Item -Recurse -Force -Path $_.FullName
-          }
+            $Cutoff = (Get-Date).AddDays(-{{ cleanup_days }})
+            Get-ChildItem -Path $TargetPath -Directory | Where-Object { $_.LastWriteTime -lt $Cutoff } | ForEach-Object {
+                Remove-Item -Recurse -Force -Path $_.FullName
+            }
         } catch {}
       args:
         executable: powershell
-      vars:
-        SharePath: "{{ share_unc_path }}"
-        User: "{{ share_username }}"
-        Pass: "{{ share_password }}"
-        CleanupDays: "{{ cleanup_days }}"
-        UpdatesJson: "{{ update_result.updates | default({}) | to_json | quote }}"
       when: inventory_hostname not in skip_servers
 
     - name: Reboot if required (skip_servers excluded)
