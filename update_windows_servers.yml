@@ -1,5 +1,5 @@
 ---
-- name: Windows Updates with Email Notification (no reboot)
+- name: Update Windows Servers
   hosts: windows
   gather_facts: yes
   vars:
@@ -13,45 +13,52 @@
         path: C:\Temp
         state: directory
 
-    - name: Run Windows Updates (no reboot)
+    - name: Install all pending Windows Updates (no reboot)
       win_updates:
-        category_names:
-          - SecurityUpdates
-          - CriticalUpdates
-          - Definition Updates
-          - Windows Defender
-          - Drivers
-          - UpdateRollups
+        category_names: []   # empty list = no filtering; install all updates
         reboot: no
+        accept_eula: yes
       register: update_result
 
     - name: Debug - show update result
       debug:
         var: update_result
 
-    - name: Determine if reboot required or if updates failed with HRESULT 0
+    - name: Determine if reboot required or if updates failed
       set_fact:
         reboot_required: "{{ update_result.reboot_required | default(false) or (update_result.failed_update_count | default(0) > 0) }}"
 
     - name: Build summary file on Windows
       win_shell: |
         $SummaryPath = "{{ temp_summary }}"
+        $updates = {{ update_result.updates | default({}) | to_json | from_json }}
+
         "Windows Update Summary for {{ ansible_hostname }}" | Out-File -FilePath $SummaryPath
         "" | Out-File -FilePath $SummaryPath -Append
+
+        # Installed updates
         "Installed updates:" | Out-File -FilePath $SummaryPath -Append
-        foreach ($u in {{ update_result.updates | to_json | from_json }}.GetEnumerator()) {
-          if ($u.Value.installed -eq $true) {
-            " - $($u.Value.title) ($($u.Value.kb -join ', '))" | Out-File -FilePath $SummaryPath -Append
-          }
+        foreach ($u in $updates.GetEnumerator()) {
+            if ($u.Value.installed -eq $true) {
+                $kbList = if ($u.Value.kb.Count -gt 0) { "($($u.Value.kb -join ', '))" } else { "" }
+                " - $($u.Value.title) $kbList" | Out-File -FilePath $SummaryPath -Append
+            }
         }
+
         "" | Out-File -FilePath $SummaryPath -Append
+
+        # Failed updates
         "Failed updates:" | Out-File -FilePath $SummaryPath -Append
-        foreach ($u in {{ update_result.updates | to_json | from_json }}.GetEnumerator()) {
-          if ($u.Value.installed -ne $true) {
-            " - $($u.Value.title) ($($u.Value.kb -join ', '))" | Out-File -FilePath $SummaryPath -Append
-          }
+        foreach ($u in $updates.GetEnumerator()) {
+            if ($u.Value.installed -ne $true) {
+                $kbList = if ($u.Value.kb.Count -gt 0) { "($($u.Value.kb -join ', '))" } else { "" }
+                " - $($u.Value.title) $kbList" | Out-File -FilePath $SummaryPath -Append
+            }
         }
+
         "" | Out-File -FilePath $SummaryPath -Append
+
+        # Reboot required
         "Reboot required: {{ reboot_required }}" | Out-File -FilePath $SummaryPath -Append
       args:
         executable: powershell
@@ -74,12 +81,15 @@
       vars:
         summary_files: "{{ lookup('fileglob', '/tmp/windows_update_*.txt', wantlist=True) }}"
       ansible.builtin.shell: |
-        echo "⚠️ The following Windows servers require a reboot after updates:" > /tmp/windows_reboot_summary.txt
-        echo "" >> /tmp/windows_reboot_summary.txt
-        for f in {{ summary_files | join(' ') }}; do
-          echo "---- $(basename $f .txt | sed 's/windows_update_//')" >> /tmp/windows_reboot_summary.txt
-          cat "$f" >> /tmp/windows_reboot_summary.txt
+        if [ {{ global_reboot_required_hosts | default([]) | length }} -gt 0 ]; then
+          echo "⚠️ The following Windows servers require a reboot after updates:" > /tmp/windows_reboot_summary.txt
           echo "" >> /tmp/windows_reboot_summary.txt
-        done
-        mail -s "⚠️ Windows Servers Reboot Required" {{ email_to }} < /tmp/windows_reboot_summary.txt
-      when: global_reboot_required_hosts | length > 0
+          for f in {{ summary_files | join(' ') }}; do
+            echo "---- $(basename $f .txt | sed 's/windows_update_//')" >> /tmp/windows_reboot_summary.txt
+            cat "$f" >> /tmp/windows_reboot_summary.txt
+            echo "" >> /tmp/windows_reboot_summary.txt
+          done
+          mail -s "⚠️ Windows Servers Reboot Required" {{ email_to }} < /tmp/windows_reboot_summary.txt
+        fi
+      args:
+        executable: /bin/bash
