@@ -88,17 +88,24 @@
       when: reboot_required | bool
       run_once: false
 
+# ------------------------------------------------
+# Separate play to send email from the Ansible controller
+# ------------------------------------------------
+- name: Send reboot email from controller
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  vars:
+    email_to: "kevinreisinger@gmail.com"
+    global_reboot_required_hosts: "{{ hostvars | dict2items | selectattr('value.global_reboot_required_hosts', 'defined') | map(attribute='value.global_reboot_required_hosts') | sum(start=[]) }}"
+  tasks:
     - name: Send email if any hosts require reboot
-      delegate_to: localhost
-      connection: local
-      run_once: true
-      vars:
-        summary_files: "{{ lookup('fileglob', '/tmp/windows_update_*.txt', wantlist=True) }}"
-      ansible.builtin.shell: |
-        if [ {{ global_reboot_required_hosts | default([]) | length }} -gt 0 ]; then
+      shell: |
+        summary_files="{{ lookup('fileglob', '/tmp/windows_update_*.txt', wantlist=True) | join(' ') }}"
+        if [ {{ global_reboot_required_hosts | length }} -gt 0 ]; then
           echo "⚠️ The following Windows servers require a reboot after updates:" > /tmp/windows_reboot_summary.txt
           echo "" >> /tmp/windows_reboot_summary.txt
-          for f in {{ summary_files | join(' ') }}; do
+          for f in $summary_files; do
             echo "---- $(basename $f .txt | sed 's/windows_update_//')" >> /tmp/windows_reboot_summary.txt
             cat "$f" >> /tmp/windows_reboot_summary.txt
             echo "" >> /tmp/windows_reboot_summary.txt
