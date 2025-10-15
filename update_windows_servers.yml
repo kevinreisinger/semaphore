@@ -7,8 +7,8 @@
       - dc08.reisingers.com
       - kevireis-vc2.reisingers.com
     share_unc_path: "\\\\kevireis-home\\i$\\Documents\\Kevin\\Network Documentation\\Server Updates\\"
-    share_username:
-    share_password:
+    share_username: ""
+    share_password: ""
 
   tasks:
     - name: Ensure Temp directory exists
@@ -18,21 +18,22 @@
 
     - name: Skip patching/reboot if host is in skip_servers
       debug:
-        msg: "Skipping updates for {{ inventory_hostname }}"
+        msg: "Host {{ inventory_hostname }} is in skip_servers, skipping updates and reboot"
       when: inventory_hostname in skip_servers
 
     - name: Install all available updates
       win_updates:
         category_names:
-          - SecurityUpdates
-          - CriticalUpdates
-          - Definition Updates
-          - Windows Defender
-          - Drivers
-          - UpdateRollups
-          - FeaturePacks
-          - ServicePacks
-          - Updates
+          - "CriticalUpdates"
+          - "SecurityUpdates"
+          - "Definition Updates"
+          - "Windows Defender"
+          - "UpdateRollups"
+          - "FeaturePacks"
+          - "ServicePacks"
+          - "Tools"
+          - "Updates"
+          - "Drivers"
         reboot: no
       register: update_result
       when: inventory_hostname not in skip_servers
@@ -45,34 +46,40 @@
         "Windows Update Summary for {{ inventory_hostname }}" | Out-File $SummaryPathLocal
         "" | Out-File $SummaryPathLocal -Append
 
+        $updates = {{ update_result.updates | to_json | quote }} | ConvertFrom-Json
+
         "Installed updates:" | Out-File $SummaryPathLocal -Append
-        if ($null -ne $update_result.updates) {
-          foreach ($u in $update_result.updates.GetEnumerator()) {
-            if ($u.Value.installed -eq $true) {
-              " - $($u.Value.title) ($($u.Value.kb -join ', '))" | Out-File $SummaryPathLocal -Append
+        if ($updates) {
+            foreach ($u in $updates.PSObject.Properties) {
+                if ($u.Value.installed -eq $true) {
+                    " - $($u.Value.title) ($($u.Value.kb -join ', '))" | Out-File $SummaryPathLocal -Append
+                }
             }
-          }
         } else {
-          " - None" | Out-File $SummaryPathLocal -Append
+            " - None" | Out-File $SummaryPathLocal -Append
         }
 
         "" | Out-File $SummaryPathLocal -Append
+
         "Failed updates:" | Out-File $SummaryPathLocal -Append
-        if ($null -ne $update_result.updates) {
-          foreach ($u in $update_result.updates.GetEnumerator()) {
-            if ($u.Value.installed -ne $true) {
-              " - $($u.Value.title) ($($u.Value.kb -join ', '))" | Out-File $SummaryPathLocal -Append
+        if ($updates) {
+            foreach ($u in $updates.PSObject.Properties) {
+                if ($u.Value.installed -ne $true) {
+                    " - $($u.Value.title) ($($u.Value.kb -join ', '))" | Out-File $SummaryPathLocal -Append
+                }
             }
-          }
         } else {
-          " - None" | Out-File $SummaryPathLocal -Append
+            " - None" | Out-File $SummaryPathLocal -Append
         }
 
-        # Attempt to copy to share
-        try {
-          Copy-Item -Path $SummaryPathLocal -Destination $SummaryPathShare -Force
-        } catch {
-          Write-Host "⚠️ Unable to copy summary to share; left on local C:\Temp"
+        "Reboot required: $($update_result.reboot_required -eq $true)" | Out-File $SummaryPathLocal -Append
+
+        if ("{{ share_unc_path }}" -ne "") {
+            try {
+                Copy-Item -Path $SummaryPathLocal -Destination $SummaryPathShare -Force
+            } catch {
+                Write-Host "⚠️ Unable to copy summary to share; left on local C:\Temp"
+            }
         }
       args:
         executable: powershell
@@ -80,7 +87,5 @@
 
     - name: Reboot if required (skip_servers excluded)
       win_reboot:
-        reboot_timeout: 3600
-      when:
-        - inventory_hostname not in skip_servers
-        - update_result.reboot_required | default(false)
+        reboot_timeout: 600
+      when: inventory_hostname not in skip_servers and update_result.reboot_required | default(false)
