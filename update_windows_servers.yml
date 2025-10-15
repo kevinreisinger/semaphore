@@ -3,9 +3,10 @@
   hosts: all
   gather_facts: no
   vars:
-    temp_dir: C:/Temp
+    temp_dir: "C:\\Temp"
     skip_servers:
       - dc08.reisingers.com
+      - kevireis-vc2.reisingers.com
     share_unc_path: "\\\\kevireis-home\\i$\\Documents\\Kevin\\Network Documentation\\Server Updates\\"
     share_username: ""
     share_password: ""
@@ -18,28 +19,25 @@
         state: directory
 
     - name: Skip patching/reboot if host is in skip_servers
-      debug:
-        msg: "Skipping updates for {{ inventory_hostname }}"
-      when: inventory_hostname in skip_servers
-      register: skip_result
+      set_fact:
+        skip_this_host: "{{ inventory_hostname in skip_servers }}"
 
     - name: Install all available updates
       win_updates:
-        category_names:
-          - SecurityUpdates
-          - CriticalUpdates
+        category_names: ['SecurityUpdates', 'CriticalUpdates', 'Updates']
         reboot: yes
+      when: not skip_this_host
       register: update_result
-      when: inventory_hostname not in skip_servers
 
-    - name: Write update summary locally and to share
+    - name: Create per-host update summary file locally and on share
       win_shell: |
-        $SummaryPathLocal = "{{ temp_dir }}/{{ inventory_hostname }}_windows_update_summary.txt"
-        $SummaryPathShare = "{{ share_unc_path }}/{{ inventory_hostname }}_windows_update_summary.txt"
+        $SummaryPathLocal = "{{ temp_dir }}\\{{ inventory_hostname }}_windows_update_summary.txt"
+        $SummaryPathShare = "{{ share_unc_path }}\\{{ inventory_hostname }}_windows_update_summary.txt"
 
         "Windows Update Summary for {{ inventory_hostname }}" | Out-File -FilePath $SummaryPathLocal
         "" | Out-File -FilePath $SummaryPathLocal -Append
 
+        # Parse updates JSON safely
         $updatesJson = '{{ update_result.updates | to_json | replace("'", "''") }}'
         if ($updatesJson -and $updatesJson -ne '{}') {
             $updates = $updatesJson | ConvertFrom-Json
@@ -51,9 +49,7 @@
         if ($updates.PSObject.Properties.Count -gt 0) {
             foreach ($u in $updates.PSObject.Properties) {
                 if ($u.Value.installed -eq $true) {
-                    {% raw %}
                     " - $($u.Value.title) ($($u.Value.kb -join ', '))" | Out-File -FilePath $SummaryPathLocal -Append
-                    {% endraw %}
                 }
             }
         } else {
@@ -65,26 +61,32 @@
         if ($updates.PSObject.Properties.Count -gt 0) {
             foreach ($u in $updates.PSObject.Properties) {
                 if ($u.Value.installed -ne $true) {
-                    {% raw %}
                     " - $($u.Value.title) ($($u.Value.kb -join ', '))" | Out-File -FilePath $SummaryPathLocal -Append
-                    {% endraw %}
                 }
             }
         } else {
             " - None" | Out-File -FilePath $SummaryPathLocal -Append
         }
 
-        {% raw %}
         "Reboot required: $($update_result.reboot_required -eq $true)" | Out-File -FilePath $SummaryPathLocal -Append
-        {% endraw %}
 
         if ("{{ share_unc_path }}" -ne "") {
             try {
-                Copy-Item -Path $SummaryPathLocal -Destination $SummaryPathShare -Force
+                if ($share_username -and $share_password) {
+                    $secpasswd = ConvertTo-SecureString $share_password -AsPlainText -Force
+                    $cred = New-Object System.Management.Automation.PSCredential ($share_username, $secpasswd)
+                    Copy-Item -Path $SummaryPathLocal -Destination $SummaryPathShare -Force -Credential $cred
+                } else {
+                    Copy-Item -Path $SummaryPathLocal -Destination $SummaryPathShare -Force
+                }
             } catch {
-                Write-Host "⚠️ Unable to copy summary to share; left on local C:/Temp"
+                Write-Host "⚠️ Unable to copy summary to share; left on local C:\\Temp"
             }
         }
-      args:
-        executable: powershell.exe
-      when: inventory_hostname not in skip_servers
+      when: not skip_this_host
+
+    - name: Reboot if required (skip_servers excluded)
+      win_reboot:
+        msg: "Reboot initiated by Ansible after Windows Updates"
+        reboot_timeout: 600
+      when: not skip_this_host and update_result.reboot_required | default(false)
