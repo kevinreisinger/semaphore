@@ -1,88 +1,91 @@
 ---
 - name: Windows Updates with Auto Reboot (skip specified hosts)
   hosts: all
-  gather_facts: no
+  gather_facts: false
   vars:
-    temp_dir: "C:/Temp"
+    temp_dir: 'C:\Temp'
     skip_servers:
-      - "dc08.reisingers.com"
-    share_unc_path: "\\\\kevireis-home\\i$\\Documents\\Kevin\\Network Documentation\\Server Updates\\"
-    share_username: ""
-    share_password: ""
-
+      - dc08.reisingers.com
+    share_unc_path: '\\kevireis-home\i$\Documents\Kevin\Network Documentation\Server Updates\'
+    share_username: ''
+    share_password: ''
+    
   tasks:
 
-    - name: Ensure Temp directory exists
-      win_file:
-        path: "{{ temp_dir }}"
-        state: directory
+  - name: Ensure Temp directory exists
+    win_file:
+      path: "{{ temp_dir }}"
+      state: directory
 
-    - name: Skip patching/reboot if host is in skip_servers
-      set_fact:
-        skip_host: true
-      when: inventory_hostname in skip_servers
+  - name: Skip patching/reboot if host is in skip_servers
+    set_fact:
+      skip_host: true
+    when: inventory_hostname in skip_servers
 
-    - name: Install all available updates
-      win_updates:
-        category_names: ['Security Updates', 'Critical Updates', 'Update Rollups', 'Definition Updates']
-        reboot: yes
-      register: update_result
-      when: skip_host is not defined
+  - name: Install all available updates
+    win_updates:
+      category_names:
+        - SecurityUpdates
+        - CriticalUpdates
+        - Definition Updates
+      reboot: no
+    register: update_result
+    when: skip_host is not defined
 
-    - name: Create per-host update summary file locally and on share
-      win_shell: |
-        $SummaryPathLocal = "{{ temp_dir | replace('\\','/') }}/{{ inventory_hostname }}_windows_update_summary.txt"
-        $SummaryPathShare = "{{ share_unc_path | replace('\\','/') }}/{{ inventory_hostname }}_windows_update_summary.txt"
+  - name: Create per-host update summary file locally and on share
+    win_shell: |
+      $SummaryPathLocal = '{{ temp_dir }}/{{ inventory_hostname }}_windows_update_summary.txt'
+      $SummaryPathShare = '{{ share_unc_path }}/{{ inventory_hostname }}_windows_update_summary.txt'
 
-        "Windows Update Summary for {{ inventory_hostname }}" | Out-File -FilePath $SummaryPathLocal
-        "" | Out-File -FilePath $SummaryPathLocal -Append
+      "Windows Update Summary for {{ inventory_hostname }}" | Out-File -FilePath $SummaryPathLocal
+      "" | Out-File -FilePath $SummaryPathLocal -Append
 
-        $updatesJson = '{{ update_result.updates | to_json | replace("'", "''") }}'
-        if ($updatesJson -and $updatesJson -ne '{}') {
-            $updates = $updatesJson | ConvertFrom-Json
-        } else {
-            $updates = @{}
-        }
+      $updatesJson = '{{ update_result.updates | to_json | replace("'", "''") }}'
+      if ($updatesJson -and $updatesJson -ne '{}') {
+          $updates = $updatesJson | ConvertFrom-Json
+      } else {
+          $updates = @{}
+      }
 
-        "Installed updates:" | Out-File -FilePath $SummaryPathLocal -Append
-        if ($updates.PSObject.Properties.Count -gt 0) {
-            foreach ($u in $updates.PSObject.Properties) {
-                if ($u.Value.installed -eq $true) {
-                    " - $($u.Value.title) ($($u.Value.kb -join ', '))" | Out-File -FilePath $SummaryPathLocal -Append
-                }
-            }
-        } else {
-            " - None" | Out-File -FilePath $SummaryPathLocal -Append
-        }
+      "Installed updates:" | Out-File -FilePath $SummaryPathLocal -Append
+      if ($updates.PSObject.Properties.Count -gt 0) {
+          foreach ($u in $updates.PSObject.Properties) {
+              if ($u.Value.installed -eq $true) {
+                  " - $($u.Value.title) ($($u.Value.kb -join ', '))" | Out-File -FilePath $SummaryPathLocal -Append
+              }
+          }
+      } else {
+          " - None" | Out-File -FilePath $SummaryPathLocal -Append
+      }
 
-        "" | Out-File -FilePath $SummaryPathLocal -Append
-        "Failed updates:" | Out-File -FilePath $SummaryPathLocal -Append
-        if ($updates.PSObject.Properties.Count -gt 0) {
-            foreach ($u in $updates.PSObject.Properties) {
-                if ($u.Value.installed -ne $true) {
-                    " - $($u.Value.title) ($($u.Value.kb -join ', '))" | Out-File -FilePath $SummaryPathLocal -Append
-                }
-            }
-        } else {
-            " - None" | Out-File -FilePath $SummaryPathLocal -Append
-        }
+      "" | Out-File -FilePath $SummaryPathLocal -Append
+      "Failed updates:" | Out-File -FilePath $SummaryPathLocal -Append
+      if ($updates.PSObject.Properties.Count -gt 0) {
+          foreach ($u in $updates.PSObject.Properties) {
+              if ($u.Value.installed -ne $true) {
+                  " - $($u.Value.title) ($($u.Value.kb -join ', '))" | Out-File -FilePath $SummaryPathLocal -Append
+              }
+          }
+      } else {
+          " - None" | Out-File -FilePath $SummaryPathLocal -Append
+      }
 
-        "Reboot required: $($update_result.reboot_required -eq $true)" | Out-File -FilePath $SummaryPathLocal -Append
+      "Reboot required: $($update_result.reboot_required -eq $true)" | Out-File -FilePath $SummaryPathLocal -Append
 
-        if ("{{ share_unc_path }}" -ne "") {
-            try {
-                Copy-Item -Path $SummaryPathLocal -Destination $SummaryPathShare -Force
-            } catch {
-                Write-Host "⚠️ Unable to copy summary to share; left on local C:/Temp"
-            }
-        }
-      args:
-        executable: powershell.exe
-      when: skip_host is not defined
+      if ('{{ share_unc_path }}' -ne '') {
+          try {
+              Copy-Item -Path $SummaryPathLocal -Destination $SummaryPathShare -Force
+          } catch {
+              Write-Host "⚠️ Unable to copy summary to share; left on local C:/Temp"
+          }
+      }
+    args:
+      executable: powershell.exe
+    when: skip_host is not defined
 
-    - name: Reboot if required (skip_servers excluded)
-      win_reboot:
-        reboot_timeout: 600
-      when:
-        - skip_host is not defined
-        - update_result.reboot_required | default(false)
+  - name: Reboot if required (skip_servers excluded)
+    win_reboot:
+      reboot_timeout: 3600
+    when:
+      - skip_host is not defined
+      - update_result.reboot_required | default(false)
