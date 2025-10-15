@@ -1,14 +1,12 @@
 ---
-- name: Windows Updates with Auto Reboot and Optimized Summary
+- name: Windows Updates with Auto Reboot and Centralized Summary
   hosts: all
   gather_facts: no
   vars:
-    controller_summary_path: "/tmp/windows_updates_controller_summary.txt"
     skip_reboot_servers:
       - dc08.reisingers.com
       # Add more servers here
-      # - dc09.reisingers.com
-      # - srv10.reisingers.com
+    temp_summary_dir: "C:\\Temp"
 
   tasks:
 
@@ -28,24 +26,29 @@
         reboot: no
       register: update_result
 
-    - name: Create per-host update summary file with emoji (optimized)
+    - name: Create per-host update summary file (PowerShell JSON conversion)
       win_shell: |
         $Timestamp = (Get-Date).ToString("yyyy-MM-dd_HH-mm-ss")
-        $SummaryDir = "C:\Temp"
-        $SummaryPath = Join-Path $SummaryDir "windows_update_summary_$Timestamp.txt"
-        New-Item -ItemType Directory -Force -Path $SummaryDir | Out-Null
+        $SummaryPath = Join-Path "{{ temp_summary_dir }}" "windows_update_summary_$Timestamp.txt"
+        New-Item -ItemType Directory -Force -Path "{{ temp_summary_dir }}" | Out-Null
 
         "Windows Update Summary for $env:COMPUTERNAME" | Out-File -FilePath $SummaryPath
         "" | Out-File -FilePath $SummaryPath -Append
 
-        $updates = {{ update_result.updates | to_json | from_json }}
+        $updateJson = @'
+{{ update_result.updates | to_json }}
+'@
+        $updates = $updateJson | ConvertFrom-Json
 
-        if ($updates.Count -gt 0) {
-            foreach ($u in $updates.GetEnumerator()) {
-                if ($u.Value.installed -eq $true) {
-                    "✅ $($u.Value.title) ($($u.Value.kb -join ', '))" | Out-File -FilePath $SummaryPath -Append
+        if ($updates.PSObject.Properties.Count -gt 0) {
+            foreach ($u in $updates.PSObject.Properties) {
+                $title = $u.Value.title
+                $kb = ($u.Value.kb -join ', ')
+                $installed = $u.Value.installed
+                if ($installed) {
+                    "✅ $title ($kb)" | Out-File -FilePath $SummaryPath -Append
                 } else {
-                    "❌ $($u.Value.title) ($($u.Value.kb -join ', '))" | Out-File -FilePath $SummaryPath -Append
+                    "❌ $title ($kb)" | Out-File -FilePath $SummaryPath -Append
                 }
             }
         } else {
@@ -98,34 +101,40 @@
           'reboot_required': update_result.reboot_required | default(false)
         }] }}"
 
-  - name: Write centralized emoji-enhanced summary on controller
-    delegate_to: localhost
-    run_once: true
-    block:
-      - name: Initialize controller summary table
-        copy:
-          content: |
-            Centralized Windows Updates Summary
-            Timestamp: {{ ansible_date_time.iso8601 }}
+- name: Write centralized emoji-enhanced summary on controller
+  hosts: localhost
+  gather_facts: no
+  vars:
+    centralized_update_stats: "{{ hostvars | dict2items | map(attribute='value.centralized_update_stats') | select('defined') | sum(start=[]) }}"
+    controller_summary_path: "/tmp/windows_updates_controller_summary.txt"
+    skip_reboot_servers:
+      - dc08.reisingers.com
+  tasks:
 
-            +-------------------------+----------+--------+-------+------------------------------+
-            | Host                    | Installed| Failed | Total | Status                       |
-            +-------------------------+----------+--------+-------+------------------------------+
-          dest: "{{ controller_summary_path }}"
+    - name: Initialize controller summary table
+      copy:
+        content: |
+          Centralized Windows Updates Summary
+          Timestamp: {{ ansible_date_time.iso8601 }}
 
-      - name: Append per-host rows with emoji status
-        lineinfile:
-          path: "{{ controller_summary_path }}"
-          line: |
-            | {{ item.host | ljust(23) }} | {{ item.installed | string | ljust(8) }} | {{ item.failed | string | ljust(6) }} | {{ item.total | string | ljust(5) }} | {% if item.failed > 0 %}❌ Updates failed{% elif item.reboot_required and item.host in skip_reboot_servers %}⚠️ Reboot skipped{% elif item.reboot_required %}⚠️ Will reboot{% else %}✅ All good{% endif %} |
-          insertafter: EOF
-        loop: "{{ centralized_update_stats }}"
+          +-------------------------+----------+--------+-------+------------------------------+
+          | Host                    | Installed| Failed | Total | Status                       |
+          +-------------------------+----------+--------+-------+------------------------------+
+        dest: "{{ controller_summary_path }}"
 
-      - name: Append table footer with aggregate totals
-        lineinfile:
-          path: "{{ controller_summary_path }}"
-          line: |
-            +-------------------------+----------+--------+-------+------------------------------+
-            | AGGREGATE TOTALS        | {{ centralized_update_stats | sum(attribute='installed') | string | ljust(8) }} | {{ centralized_update_stats | sum(attribute='failed') | string | ljust(6) }} | {{ centralized_update_stats | sum(attribute='total') | string | ljust(5) }} |                              |
-            +-------------------------+----------+--------+-------+------------------------------+
-          insertafter: EOF
+    - name: Append per-host rows with emoji status
+      lineinfile:
+        path: "{{ controller_summary_path }}"
+        line: |
+          | {{ item.host | ljust(23) }} | {{ item.installed | string | ljust(8) }} | {{ item.failed | string | ljust(6) }} | {{ item.total | string | ljust(5) }} | {% if item.failed > 0 %}❌ Updates failed{% elif item.reboot_required and item.host in skip_reboot_servers %}⚠️ Reboot skipped{% elif item.reboot_required %}⚠️ Will reboot{% else %}✅ All good{% endif %} |
+        insertafter: EOF
+      loop: "{{ centralized_update_stats }}"
+
+    - name: Append table footer with aggregate totals
+      lineinfile:
+        path: "{{ controller_summary_path }}"
+        line: |
+          +-------------------------+----------+--------+-------+------------------------------+
+          | AGGREGATE TOTALS        | {{ centralized_update_stats | sum(attribute='installed') | string | ljust(8) }} | {{ centralized_update_stats | sum(attribute='failed') | string | ljust(6) }} | {{ centralized_update_stats | sum(attribute='total') | string | ljust(5) }} |                              |
+          +-------------------------+----------+--------+-------+------------------------------+
+        insertafter: EOF
