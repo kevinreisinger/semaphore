@@ -3,7 +3,6 @@
   hosts: windows
   gather_facts: yes
   vars:
-    email_to: "kevinreisinger@gmail.com"
     temp_summary: "C:\\Temp\\windows_update_summary.txt"
     global_reboot_required_hosts: []
 
@@ -17,7 +16,7 @@
       block:
         - name: Install all pending updates
           win_updates:
-            category_names: []   # empty list = install all updates
+            category_names: []   # install all updates
             reboot: no
           register: update_result
 
@@ -49,7 +48,6 @@
         "Windows Update Summary for {{ ansible_hostname }}" | Out-File -FilePath $SummaryPath
         "" | Out-File -FilePath $SummaryPath -Append
 
-        # Installed updates
         "Installed updates:" | Out-File -FilePath $SummaryPath -Append
         foreach ($u in $updates.GetEnumerator()) {
             if ($u.Value.installed -eq $true) {
@@ -60,7 +58,6 @@
 
         "" | Out-File -FilePath $SummaryPath -Append
 
-        # Failed updates
         "Failed updates:" | Out-File -FilePath $SummaryPath -Append
         foreach ($u in $updates.GetEnumerator()) {
             if ($u.Value.installed -ne $true) {
@@ -71,7 +68,6 @@
 
         "" | Out-File -FilePath $SummaryPath -Append
 
-        # Reboot required
         "Reboot required: {{ reboot_required }}" | Out-File -FilePath $SummaryPath -Append
       args:
         executable: powershell
@@ -89,20 +85,16 @@
       run_once: false
 
 # ------------------------------------------------
-# Separate play to send email from the Ansible controller
+# Separate local play to send reboot email
 # ------------------------------------------------
 - name: Send reboot email from controller
-  hosts: localhost
-  connection: local
+  hosts: controller
   gather_facts: no
-  vars:
-    email_to: "kevinreisinger@gmail.com"
-    global_reboot_required_hosts: "{{ hostvars | dict2items | selectattr('value.global_reboot_required_hosts', 'defined') | map(attribute='value.global_reboot_required_hosts') | sum(start=[]) }}"
   tasks:
     - name: Send email if any hosts require reboot
       shell: |
         summary_files="{{ lookup('fileglob', '/tmp/windows_update_*.txt', wantlist=True) | join(' ') }}"
-        if [ {{ global_reboot_required_hosts | length }} -gt 0 ]; then
+        if [ $(echo $summary_files | wc -w) -gt 0 ]; then
           echo "⚠️ The following Windows servers require a reboot after updates:" > /tmp/windows_reboot_summary.txt
           echo "" >> /tmp/windows_reboot_summary.txt
           for f in $summary_files; do
@@ -110,7 +102,7 @@
             cat "$f" >> /tmp/windows_reboot_summary.txt
             echo "" >> /tmp/windows_reboot_summary.txt
           done
-          mail -s "⚠️ Windows Servers Reboot Required" {{ email_to }} < /tmp/windows_reboot_summary.txt
+          mail -s "⚠️ Windows Servers Reboot Required" kevinreisinger@gmail.com < /tmp/windows_reboot_summary.txt
         fi
       args:
         executable: /bin/bash
