@@ -1,67 +1,131 @@
 ---
-- name: Windows Updates with Auto Reboot
-  hosts: windows
-  gather_facts: yes
+- name: Windows Updates with Auto Reboot and Optimized Summary
+  hosts: all
+  gather_facts: no
   vars:
-    temp_summary: "C:\\Temp\\windows_update_summary.txt"
+    controller_summary_path: "/tmp/windows_updates_controller_summary.txt"
+    skip_reboot_servers:
+      - dc08.reisingers.com
+      # Add more servers here
+      # - dc09.reisingers.com
+      # - srv10.reisingers.com
 
   tasks:
-    - name: Ensure Temp directory exists
-      ansible.windows.win_file:
-        path: C:\Temp
-        state: directory
 
-    - block:
-        - name: Run Windows Updates (auto reboot if required)
-          ansible.windows.win_updates:
-            category_names:
-              - SecurityUpdates
-              - CriticalUpdates
-              - Definition Updates
-              - Windows Defender
-              - Drivers
-              - UpdateRollups
-            reboot: yes
-          register: update_result
+    - name: Install all available updates
+      win_updates:
+        category_names:
+          - SecurityUpdates
+          - CriticalUpdates
+          - UpdateRollups
+          - Definition Updates
+          - Drivers
+          - Windows Defender
+          - FeaturePacks
+          - ServicePacks
+          - Tools
+          - Updates
+        reboot: no
+      register: update_result
 
-      rescue:
-        - name: Set empty update_result on failure
-          ansible.builtin.set_fact:
-            update_result:
-              updates: {}
-              failed_update_count: 0
-              reboot_required: false
+    - name: Create per-host update summary file with emoji (optimized)
+      win_shell: |
+        $Timestamp = (Get-Date).ToString("yyyy-MM-dd_HH-mm-ss")
+        $SummaryDir = "C:\Temp"
+        $SummaryPath = Join-Path $SummaryDir "windows_update_summary_$Timestamp.txt"
+        New-Item -ItemType Directory -Force -Path $SummaryDir | Out-Null
 
-        - name: Debug Windows Update failure
-          ansible.builtin.debug:
-            msg: "Windows Update task failed (likely Task Scheduler issue). Continuing playbook."
-
-    - name: Build summary file on Windows
-      ansible.windows.win_shell: |
-        $SummaryPath = "{{ temp_summary }}"
-        "Windows Update Summary for {{ ansible_hostname }}" | Out-File -FilePath $SummaryPath
+        "Windows Update Summary for $env:COMPUTERNAME" | Out-File -FilePath $SummaryPath
         "" | Out-File -FilePath $SummaryPath -Append
-        "Installed updates:" | Out-File -FilePath $SummaryPath -Append
-        foreach ($u in {{ update_result.updates | to_json | from_json }}.GetEnumerator()) {
-          if ($u.Value.installed -eq $true) {
-            " - $($u.Value.title) ($($u.Value.kb -join ', '))" | Out-File -FilePath $SummaryPath -Append
-          }
+
+        $updates = {{ update_result.updates | to_json | from_json }}
+
+        if ($updates.Count -gt 0) {
+            foreach ($u in $updates.GetEnumerator()) {
+                if ($u.Value.installed -eq $true) {
+                    "✅ $($u.Value.title) ($($u.Value.kb -join ', '))" | Out-File -FilePath $SummaryPath -Append
+                } else {
+                    "❌ $($u.Value.title) ($($u.Value.kb -join ', '))" | Out-File -FilePath $SummaryPath -Append
+                }
+            }
+        } else {
+            "No updates found." | Out-File -FilePath $SummaryPath -Append
         }
+
         "" | Out-File -FilePath $SummaryPath -Append
-        "Failed updates:" | Out-File -FilePath $SummaryPath -Append
-        foreach ($u in {{ update_result.updates | to_json | from_json }}.GetEnumerator()) {
-          if ($u.Value.installed -ne $true) {
-            " - $($u.Value.title) ($($u.Value.kb -join ', '))" | Out-File -FilePath $SummaryPath -Append
-          }
+
+        # Reboot logic
+        $SkipReboot = @({{ skip_reboot_servers | map('quote') | join(', ') }})
+        if ($SkipReboot -contains "{{ inventory_hostname }}") {
+            if ({{ update_result.reboot_required | lower }}) {
+                "⚠️ Reboot skipped (skip_reboot_servers)" | Out-File -FilePath $SummaryPath -Append
+            } else {
+                "✅ No reboot needed." | Out-File -FilePath $SummaryPath -Append
+            }
+        } else {
+            if ({{ update_result.reboot_required | lower }}) {
+                "⚠️ System will reboot automatically." | Out-File -FilePath $SummaryPath -Append
+            } else {
+                "✅ No reboot needed." | Out-File -FilePath $SummaryPath -Append
+            }
         }
+
         "" | Out-File -FilePath $SummaryPath -Append
-        "Reboot required: {{ update_result.reboot_required | default(false) }}" | Out-File -FilePath $SummaryPath -Append
+        "Summary file saved to: $SummaryPath" | Out-File -FilePath $SummaryPath -Append
       args:
         executable: powershell
+      register: host_summary_path
 
-    - name: Display summary info
-      ansible.builtin.debug:
-        msg:
-          - "Installed updates: {{ update_result.installed_update_count | default(0) }}"
-          - "Failed updates: {{ update_result.failed_update_count | default(0) }}"
-          - "Reboot required: {{ update_result.reboot_required | default(false) }}"
+    - name: Reboot if required (skip_reboot_servers excluded)
+      win_reboot:
+      when:
+        - update_result.reboot_required
+        - inventory_hostname not in skip_reboot_servers
+
+    - name: Fetch host summary file to controller
+      fetch:
+        src: "{{ host_summary_path.stdout | default('C:\\Temp\\windows_update_summary_*.txt') }}"
+        dest: "/tmp/windows_updates_{{ inventory_hostname }}.txt"
+        flat: yes
+
+    - name: Collect stats for centralized summary
+      set_fact:
+        centralized_update_stats: "{{ centralized_update_stats | default([]) + [{
+          'host': inventory_hostname,
+          'installed': update_result.installed_update_count | default(0),
+          'failed': update_result.failed_update_count | default(0),
+          'total': (update_result.installed_update_count | default(0)) + (update_result.failed_update_count | default(0)),
+          'reboot_required': update_result.reboot_required | default(false)
+        }] }}"
+
+  - name: Write centralized emoji-enhanced summary on controller
+    delegate_to: localhost
+    run_once: true
+    block:
+      - name: Initialize controller summary table
+        copy:
+          content: |
+            Centralized Windows Updates Summary
+            Timestamp: {{ ansible_date_time.iso8601 }}
+
+            +-------------------------+----------+--------+-------+------------------------------+
+            | Host                    | Installed| Failed | Total | Status                       |
+            +-------------------------+----------+--------+-------+------------------------------+
+          dest: "{{ controller_summary_path }}"
+
+      - name: Append per-host rows with emoji status
+        lineinfile:
+          path: "{{ controller_summary_path }}"
+          line: |
+            | {{ item.host | ljust(23) }} | {{ item.installed | string | ljust(8) }} | {{ item.failed | string | ljust(6) }} | {{ item.total | string | ljust(5) }} | {% if item.failed > 0 %}❌ Updates failed{% elif item.reboot_required and item.host in skip_reboot_servers %}⚠️ Reboot skipped{% elif item.reboot_required %}⚠️ Will reboot{% else %}✅ All good{% endif %} |
+          insertafter: EOF
+        loop: "{{ centralized_update_stats }}"
+
+      - name: Append table footer with aggregate totals
+        lineinfile:
+          path: "{{ controller_summary_path }}"
+          line: |
+            +-------------------------+----------+--------+-------+------------------------------+
+            | AGGREGATE TOTALS        | {{ centralized_update_stats | sum(attribute='installed') | string | ljust(8) }} | {{ centralized_update_stats | sum(attribute='failed') | string | ljust(6) }} | {{ centralized_update_stats | sum(attribute='total') | string | ljust(5) }} |                              |
+            +-------------------------+----------+--------+-------+------------------------------+
+          insertafter: EOF
