@@ -16,7 +16,7 @@
       block:
         - name: Install all pending updates
           win_updates:
-            category_names: []   # install all updates
+            category_names: []   # empty list = install all updates
             reboot: no
           register: update_result
 
@@ -85,7 +85,7 @@
       run_once: false
 
 # ------------------------------------------------
-# Separate local play to send reboot email
+# Separate local play on the controller to send email
 # ------------------------------------------------
 - name: Send reboot email from controller
   hosts: controller
