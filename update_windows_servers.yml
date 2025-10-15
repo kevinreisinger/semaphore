@@ -1,108 +1,67 @@
 ---
-- name: Windows Updates with Email Notification (no reboot)
+- name: Windows Updates with Auto Reboot
   hosts: windows
   gather_facts: yes
   vars:
     temp_summary: "C:\\Temp\\windows_update_summary.txt"
-    global_reboot_required_hosts: []
 
   tasks:
     - name: Ensure Temp directory exists
-      win_file:
+      ansible.windows.win_file:
         path: C:\Temp
         state: directory
 
-    - name: Run Windows Updates (no reboot)
-      block:
-        - name: Install all pending updates
-          win_updates:
-            category_names: []   # empty list = install all updates
-            reboot: no
+    - block:
+        - name: Run Windows Updates (auto reboot if required)
+          ansible.windows.win_updates:
+            category_names:
+              - SecurityUpdates
+              - CriticalUpdates
+              - Definition Updates
+              - Windows Defender
+              - Drivers
+              - UpdateRollups
+            reboot: yes
           register: update_result
 
       rescue:
         - name: Set empty update_result on failure
-          set_fact:
+          ansible.builtin.set_fact:
             update_result:
               updates: {}
               failed_update_count: 0
               reboot_required: false
 
         - name: Debug Windows Update failure
-          debug:
+          ansible.builtin.debug:
             msg: "Windows Update task failed (likely Task Scheduler issue). Continuing playbook."
 
-    - name: Debug - show update result
-      debug:
-        var: update_result
-
-    - name: Determine if reboot required or if updates failed
-      set_fact:
-        reboot_required: "{{ update_result.reboot_required | default(false) or (update_result.failed_update_count | default(0) > 0) }}"
-
     - name: Build summary file on Windows
-      win_shell: |
+      ansible.windows.win_shell: |
         $SummaryPath = "{{ temp_summary }}"
-        $updates = {{ update_result.updates | default({}) | to_json | from_json }}
-
         "Windows Update Summary for {{ ansible_hostname }}" | Out-File -FilePath $SummaryPath
         "" | Out-File -FilePath $SummaryPath -Append
-
         "Installed updates:" | Out-File -FilePath $SummaryPath -Append
-        foreach ($u in $updates.GetEnumerator()) {
-            if ($u.Value.installed -eq $true) {
-                $kbList = if ($u.Value.kb.Count -gt 0) { "($($u.Value.kb -join ', '))" } else { "" }
-                " - $($u.Value.title) $kbList" | Out-File -FilePath $SummaryPath -Append
-            }
+        foreach ($u in {{ update_result.updates | to_json | from_json }}.GetEnumerator()) {
+          if ($u.Value.installed -eq $true) {
+            " - $($u.Value.title) ($($u.Value.kb -join ', '))" | Out-File -FilePath $SummaryPath -Append
+          }
         }
-
         "" | Out-File -FilePath $SummaryPath -Append
-
         "Failed updates:" | Out-File -FilePath $SummaryPath -Append
-        foreach ($u in $updates.GetEnumerator()) {
-            if ($u.Value.installed -ne $true) {
-                $kbList = if ($u.Value.kb.Count -gt 0) { "($($u.Value.kb -join ', '))" } else { "" }
-                " - $($u.Value.title) $kbList" | Out-File -FilePath $SummaryPath -Append
-            }
+        foreach ($u in {{ update_result.updates | to_json | from_json }}.GetEnumerator()) {
+          if ($u.Value.installed -ne $true) {
+            " - $($u.Value.title) ($($u.Value.kb -join ', '))" | Out-File -FilePath $SummaryPath -Append
+          }
         }
-
         "" | Out-File -FilePath $SummaryPath -Append
-
-        "Reboot required: {{ reboot_required }}" | Out-File -FilePath $SummaryPath -Append
+        "Reboot required: {{ update_result.reboot_required | default(false) }}" | Out-File -FilePath $SummaryPath -Append
       args:
         executable: powershell
 
-    - name: Fetch summary file from Windows to Ansible controller
-      fetch:
-        src: "{{ temp_summary }}"
-        dest: "/tmp/windows_update_{{ inventory_hostname }}.txt"
-        flat: yes
-
-    - name: Collect reboot-required hosts
-      set_fact:
-        global_reboot_required_hosts: "{{ (global_reboot_required_hosts | default([])) + [inventory_hostname] }}"
-      when: reboot_required | bool
-      run_once: false
-
-# ------------------------------------------------
-# Separate task delegated to a real Linux host for sending email
-# ------------------------------------------------
-- name: Send reboot email from Linux controller
-  hosts: controller
-  gather_facts: no
-  tasks:
-    - name: Send email if any hosts require reboot
-      shell: |
-        summary_files="{{ lookup('fileglob', '/tmp/windows_update_*.txt', wantlist=True) | join(' ') }}"
-        if [ $(echo $summary_files | wc -w) -gt 0 ]; then
-          echo "⚠️ The following Windows servers require a reboot after updates:" > /tmp/windows_reboot_summary.txt
-          echo "" >> /tmp/windows_reboot_summary.txt
-          for f in $summary_files; do
-            echo "---- $(basename $f .txt | sed 's/windows_update_//')" >> /tmp/windows_reboot_summary.txt
-            cat "$f" >> /tmp/windows_reboot_summary.txt
-            echo "" >> /tmp/windows_reboot_summary.txt
-          done
-          mail -s "⚠️ Windows Servers Reboot Required" kevinreisinger@gmail.com < /tmp/windows_reboot_summary.txt
-        fi
-      args:
-        executable: /bin/bash
+    - name: Display summary info
+      ansible.builtin.debug:
+        msg:
+          - "Installed updates: {{ update_result.installed_update_count | default(0) }}"
+          - "Failed updates: {{ update_result.failed_update_count | default(0) }}"
+          - "Reboot required: {{ update_result.reboot_required | default(false) }}"
