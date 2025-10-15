@@ -17,7 +17,7 @@
       block:
         - name: Install all pending updates
           win_updates:
-            category_names: []   # empty list = no filtering; install all updates
+            category_names: []   # empty list = install all updates
             reboot: no
           register: update_result
 
@@ -90,6 +90,7 @@
 
     - name: Send email if any hosts require reboot
       delegate_to: localhost
+      connection: local
       run_once: true
       vars:
         summary_files: "{{ lookup('fileglob', '/tmp/windows_update_*.txt', wantlist=True) }}"
