@@ -1,0 +1,115 @@
+---
+- name: Windows Updates with Auto Reboot (skip specified hosts)
+  hosts: windows
+  gather_facts: yes
+  vars:
+    skip_servers:
+      - dc08.reisingers.com
+      - kevireis-vc2.reisingers.com
+    share_unc_path: "\\\\kevireis-home\\i$\\Documents\\Kevin\\Network Documentation\\Server Updates\\"
+    share_username: ""
+    share_password: ""
+    cleanup_days: 30
+
+  tasks:
+
+    - name: Ensure Temp directory exists
+      win_file:
+        path: C:\Temp
+        state: directory
+
+    - name: Skip patching/reboot if host is in skip_servers
+      debug:
+        msg: "Skipping patching for host {{ inventory_hostname }}"
+      when: inventory_hostname in skip_servers
+
+    - name: Install all available updates
+      win_updates:
+        category_names:
+          - CriticalUpdates
+          - SecurityUpdates
+          - Definition Updates
+          - Windows Defender
+          - Feature Packs
+          - Service Packs
+          - Tools
+          - Update Rollups
+          - Updates
+          - Drivers
+        reboot: no
+      register: update_result
+      when: inventory_hostname not in skip_servers
+
+    - name: Create per-host update summary file locally and optionally on share
+      win_shell: |
+        $Timestamp = Get-Date -Format "yyyy-MM-dd_HHmm"
+        $DateFolder = Get-Date -Format "yyyy-MM-dd"
+        $LocalTemp = "C:\Temp"
+        $HostName = "{{ inventory_hostname }}"
+        $Updates = $update_result.updates
+
+        # Determine target path
+        $TargetPath = $LocalTemp
+        try {
+            if ("{{ share_unc_path }}" -ne "") {
+                if ("{{ share_username }}" -ne "" -and "{{ share_password }}" -ne "") {
+                    $SecPass = ConvertTo-SecureString "{{ share_password }}" -AsPlainText -Force
+                    $Cred = New-Object System.Management.Automation.PSCredential("{{ share_username }}", $SecPass)
+                    New-PSDrive -Name Z -PSProvider FileSystem -Root "{{ share_unc_path }}" -Credential $Cred -ErrorAction Stop | Out-Null
+                    $TargetPath = "Z:"
+                } elseif (Test-Path "{{ share_unc_path }}") {
+                    $TargetPath = "{{ share_unc_path }}"
+                }
+            }
+        } catch { $TargetPath = $LocalTemp; Write-Host "⚠️ Could not access share. Using local C:\Temp" }
+
+        # Create dated folder
+        $DatePath = Join-Path $TargetPath $DateFolder
+        if (!(Test-Path $DatePath)) { New-Item -ItemType Directory -Path $DatePath -Force | Out-Null }
+
+        # Summary file path
+        $SummaryFile = Join-Path $DatePath "$HostName`_$Timestamp.txt"
+
+        # Initialize summary
+        "Windows Update Summary for $HostName" | Out-File -FilePath $SummaryFile
+        "" | Out-File -FilePath $SummaryFile -Append
+
+        # Installed updates
+        "Installed updates:" | Out-File -FilePath $SummaryFile -Append
+        if ($Updates -and $Updates.PSObject.Properties.Count -gt 0) {
+            foreach ($u in $Updates.PSObject.Properties) {
+                if ($u.Value.installed -eq $true) {
+                    " - $($u.Value.title) (KB$($u.Value.kb -join ', KB'))" | Out-File -FilePath $SummaryFile -Append
+                }
+            }
+        } else { " - None" | Out-File -FilePath $SummaryFile -Append }
+
+        # Failed updates
+        "" | Out-File -FilePath $SummaryFile -Append
+        "Failed updates:" | Out-File -FilePath $SummaryFile -Append
+        if ($Updates -and $Updates.PSObject.Properties.Count -gt 0) {
+            foreach ($u in $Updates.PSObject.Properties) {
+                if ($u.Value.installed -ne $true) {
+                    " - $($u.Value.title) (KB$($u.Value.kb -join ', KB'))" | Out-File -FilePath $SummaryFile -Append
+                }
+            }
+        } else { " - None" | Out-File -FilePath $SummaryFile -Append }
+
+        "" | Out-File -FilePath $SummaryFile -Append
+        "Reboot required: $($update_result.reboot_required -eq $true)" | Out-File -FilePath $SummaryFile -Append
+
+        # Cleanup old folders
+        try {
+            $Cutoff = (Get-Date).AddDays(-{{ cleanup_days }})
+            Get-ChildItem -Path $TargetPath -Directory | Where-Object { $_.LastWriteTime -lt $Cutoff } | ForEach-Object {
+                Remove-Item -Recurse -Force -Path $_.FullName
+            }
+        } catch {}
+      args:
+        executable: powershell
+      when: inventory_hostname not in skip_servers
+
+    - name: Reboot if required (skip_servers excluded)
+      win_reboot:
+        reboot_timeout: 3600
+      when: inventory_hostname not in skip_servers and update_result.reboot_required | default(false)
