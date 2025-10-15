@@ -11,7 +11,6 @@
     share_password: ""
 
   tasks:
-
     - name: Ensure Temp directory exists
       win_file:
         path: "{{ temp_dir }}"
@@ -25,14 +24,16 @@
     - name: Install all available updates
       win_updates:
         category_names:
-          - SecurityUpdates
-          - CriticalUpdates
-          - DefinitionUpdates
-          - UpdateRollups
-          - FeaturePacks
-          - ServicePacks
-          - Tools
-          - Updates
+          - "Security Updates"
+          - "Critical Updates"
+          - "Update Rollups"
+          - "Updates"
+          - "Definition Updates"
+          - "Feature Packs"
+          - "Service Packs"
+          - "Tools"
+          - "Drivers"
+          - "Other"
         reboot: yes
       register: update_result
       when: skip_host is not defined
@@ -45,13 +46,16 @@
         "Windows Update Summary for {{ inventory_hostname }}" | Out-File $SummaryPathLocal
         "" | Out-File $SummaryPathLocal -Append
 
-        $updates = @{}
-        if ($env:update_result -and $env:update_result -ne "{}") {
-            $updates = $env:update_result | ConvertFrom-Json
+        # Parse updates JSON safely
+        $updatesJson = '{{ update_result.updates | to_json | replace("'", "''") }}'
+        if ($updatesJson -and $updatesJson -ne '{}') {
+            $updates = $updatesJson | ConvertFrom-Json
+        } else {
+            $updates = @{}
         }
 
         "Installed updates:" | Out-File $SummaryPathLocal -Append
-        if ($updates) {
+        if ($updates.PSObject.Properties.Count -gt 0) {
             foreach ($u in $updates.PSObject.Properties) {
                 if ($u.Value.installed -eq $true) {
                     " - $($u.Value.title) ($($u.Value.kb -join ', '))" | Out-File $SummaryPathLocal -Append
@@ -63,7 +67,7 @@
 
         "" | Out-File $SummaryPathLocal -Append
         "Failed updates:" | Out-File $SummaryPathLocal -Append
-        if ($updates) {
+        if ($updates.PSObject.Properties.Count -gt 0) {
             foreach ($u in $updates.PSObject.Properties) {
                 if ($u.Value.installed -ne $true) {
                     " - $($u.Value.title) ($($u.Value.kb -join ', '))" | Out-File $SummaryPathLocal -Append
@@ -84,13 +88,4 @@
         }
       args:
         executable: powershell.exe
-      environment:
-        update_result: "{{ update_result.updates | to_json }}"
       when: skip_host is not defined
-
-    - name: Reboot if required
-      win_reboot:
-        reboot_timeout: 1200
-      when:
-        - skip_host is not defined
-        - update_result.reboot_required | default(false)
