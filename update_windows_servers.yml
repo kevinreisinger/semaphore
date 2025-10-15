@@ -17,6 +17,7 @@
       win_updates:
         category_names: []   # empty list = no filtering; install all updates
         reboot: no      
+        ignore_reboot: yes
       register: update_result
 
     - name: Debug - show update result
