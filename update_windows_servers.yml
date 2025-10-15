@@ -7,7 +7,7 @@
     skip_servers:
       - dc08.reisingers.com
       - kevireis-vc2.reisingers.com
-    share_unc_path: "\\\\kevireis-home\\i$\\Documents\\Kevin\\Network Documentation\\Server Updates\\"
+    share_unc_path: "\\kevireis-home\i$\Documents\Kevin\Network Documentation\Server Updates\"
     share_username: ""
     share_password: ""
   tasks:
@@ -37,7 +37,7 @@
 
         $updatesJson = '{{ update_result.updates | to_json | replace("'", "''") }}'
 
-        $script = @"
+        $script = @'
 Windows Update Summary for {{ inventory_hostname }}
 
 Installed updates:
@@ -45,7 +45,7 @@ if ($updatesJson -and $updatesJson -ne '{}') {
     $updates = $updatesJson | ConvertFrom-Json
     foreach ($u in $updates.PSObject.Properties) {
         if ($u.Value.installed -eq $true) {
-            Write-Output " - $($u.Value.title) ($($u.Value.kb -join ', '))"
+            Write-Output (" - " + $u.Value.title + " (" + ($u.Value.kb -join ", ") + ")")
         }
     }
 } else {
@@ -56,7 +56,7 @@ Failed updates:
 if ($updatesJson -and $updatesJson -ne '{}') {
     foreach ($u in $updates.PSObject.Properties) {
         if ($u.Value.installed -ne $true) {
-            Write-Output " - $($u.Value.title) ($($u.Value.kb -join ', '))"
+            Write-Output (" - " + $u.Value.title + " (" + ($u.Value.kb -join ", ") + ")")
         }
     }
 } else {
@@ -64,7 +64,7 @@ if ($updatesJson -and $updatesJson -ne '{}') {
 }
 
 Reboot required: $($update_result.reboot_required -eq $true)
-"@
+'@
 
         $script | Out-File -FilePath $SummaryPathLocal -Encoding UTF8
 
