@@ -40,13 +40,14 @@
       register: update_result
       when: inventory_hostname not in skip_servers
 
-    - name: Create per-host update summary file in shared folder (safe)
+    - name: Create per-host update summary file safely
       win_shell: |
         param(
           [string]$SharePath,
           [string]$User,
           [string]$Pass,
-          [int]$CleanupDays
+          [int]$CleanupDays,
+          [string]$UpdatesJson
         )
 
         $Timestamp = Get-Date -Format "yyyy-MM-dd_HHmm"
@@ -61,8 +62,7 @@
             $Cred = New-Object System.Management.Automation.PSCredential($User, $SecurePass)
             New-PSDrive -Name Z -PSProvider FileSystem -Root $SharePath -Credential $Cred -ErrorAction Stop | Out-Null
             $TargetPath = "Z:"
-          }
-          elseif (!(Test-Path $SharePath)) {
+          } elseif (!(Test-Path $SharePath)) {
             throw "Share path not accessible"
           }
         } catch {
@@ -72,33 +72,28 @@
 
         # Create dated subfolder
         $DatePath = Join-Path $TargetPath $DateFolder
-        if (!(Test-Path $DatePath)) {
-          New-Item -ItemType Directory -Path $DatePath -Force | Out-Null
-        }
+        if (!(Test-Path $DatePath)) { New-Item -ItemType Directory -Path $DatePath -Force | Out-Null }
 
-        # Define per-host summary file
+        # Summary file
         $SummaryPath = Join-Path $DatePath "{{ inventory_hostname }}_$Timestamp.txt"
-
-        # Initialize summary content
         "Windows Update Summary for {{ inventory_hostname }}" | Out-File -FilePath $SummaryPath
         "" | Out-File -FilePath $SummaryPath -Append
 
+        # Parse updates
+        $updates = @{}
+        if ($UpdatesJson -and $UpdatesJson -ne '{}') {
+            try { $updates = $UpdatesJson | ConvertFrom-Json } catch {}
+        }
+
         # Installed updates
         "Installed updates:" | Out-File -FilePath $SummaryPath -Append
-        $updates = @{}
-        try { 
-            $jsonStr = '{{ update_result.updates | default({}) | to_json | replace("'", "''") }}'
-            if ($jsonStr -ne '{}') { $updates = $jsonStr | ConvertFrom-Json }
-        } catch {}
         if ($updates.PSObject.Properties.Count -gt 0) {
             foreach ($u in $updates.PSObject.Properties) {
                 if ($u.Value.installed -eq $true) {
                     " - $($u.Value.title) (KB$($u.Value.kb -join ', KB'))" | Out-File -FilePath $SummaryPath -Append
                 }
             }
-        } else {
-            " - None" | Out-File -FilePath $SummaryPath -Append
-        }
+        } else { " - None" | Out-File -FilePath $SummaryPath -Append }
 
         # Failed updates
         "" | Out-File -FilePath $SummaryPath -Append
@@ -109,9 +104,7 @@
                     " - $($u.Value.title) (KB$($u.Value.kb -join ', KB'))" | Out-File -FilePath $SummaryPath -Append
                 }
             }
-        } else {
-            " - None" | Out-File -FilePath $SummaryPath -Append
-        }
+        } else { " - None" | Out-File -FilePath $SummaryPath -Append }
 
         "" | Out-File -FilePath $SummaryPath -Append
         "Reboot required: {{ update_result.reboot_required | default(false) }}" | Out-File -FilePath $SummaryPath -Append
@@ -130,6 +123,7 @@
         User: "{{ share_username | default('') }}"
         Pass: "{{ share_password | default('') }}"
         CleanupDays: "{{ cleanup_days }}"
+        UpdatesJson: "{{ update_result.updates | default({}) | to_json | replace('\n','') | replace('\'','\'\'') }}"
       when: inventory_hostname not in skip_servers
 
     - name: Reboot if required (skip_servers excluded)
