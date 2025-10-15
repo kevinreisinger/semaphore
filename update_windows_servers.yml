@@ -9,9 +9,8 @@
     share_unc_path: "\\\\kevireis-home\\i$\\Documents\\Kevin\\Network Documentation\\Server Updates\\"
     share_username:
     share_password:
-    cleanup_days: 30
-  tasks:
 
+  tasks:
     - name: Ensure Temp directory exists
       win_file:
         path: C:\Temp
@@ -19,116 +18,69 @@
 
     - name: Skip patching/reboot if host is in skip_servers
       debug:
-        msg: "Skipping patching for host {{ inventory_hostname }}"
+        msg: "Skipping updates for {{ inventory_hostname }}"
       when: inventory_hostname in skip_servers
 
     - name: Install all available updates
       win_updates:
         category_names:
-          - CriticalUpdates
           - SecurityUpdates
+          - CriticalUpdates
           - Definition Updates
           - Windows Defender
-          - Feature Packs
-          - Service Packs
-          - Tools
-          - Update Rollups
-          - Updates
           - Drivers
+          - UpdateRollups
+          - FeaturePacks
+          - ServicePacks
+          - Updates
         reboot: no
       register: update_result
       when: inventory_hostname not in skip_servers
 
-    - name: Create per-host update summary file in shared folder (safe)
+    - name: Create per-host update summary file
       win_shell: |
-        param(
-          [string]$SharePath,
-          [string]$User,
-          [string]$Pass,
-          [int]$CleanupDays
-        )
+        $SummaryPathLocal = "C:\Temp\{{ inventory_hostname }}_windows_update_summary.txt"
+        $SummaryPathShare = "{{ share_unc_path }}\{{ inventory_hostname }}_windows_update_summary.txt"
 
-        $Timestamp = Get-Date -Format "yyyy-MM-dd_HHmm"
-        $DateFolder = Get-Date -Format "yyyy-MM-dd"
-        $LocalFallback = "C:\Temp"
-        $TargetPath = $SharePath
+        "Windows Update Summary for {{ inventory_hostname }}" | Out-File $SummaryPathLocal
+        "" | Out-File $SummaryPathLocal -Append
 
-        # Connect to network share if credentials provided
-        try {
-          if ($User -and $Pass) {
-            $SecurePass = ConvertTo-SecureString $Pass -AsPlainText -Force
-            $Cred = New-Object System.Management.Automation.PSCredential($User, $SecurePass)
-            New-PSDrive -Name Z -PSProvider FileSystem -Root $SharePath -Credential $Cred -ErrorAction Stop | Out-Null
-            $TargetPath = "Z:"
-          }
-          elseif (!(Test-Path $SharePath)) {
-            throw "Share path not accessible"
-          }
-        } catch {
-          Write-Host "⚠️ Unable to access $SharePath. Using local fallback path $LocalFallback"
-          $TargetPath = $LocalFallback
-        }
-
-        # Create dated subfolder
-        $DatePath = Join-Path $TargetPath $DateFolder
-        if (!(Test-Path $DatePath)) {
-          New-Item -ItemType Directory -Path $DatePath -Force | Out-Null
-        }
-
-        # Define per-host summary file
-        $SummaryPath = Join-Path $DatePath "{{ inventory_hostname }}_$Timestamp.txt"
-
-        # Initialize summary content
-        "Windows Update Summary for {{ inventory_hostname }}" | Out-File -FilePath $SummaryPath
-        "" | Out-File -FilePath $SummaryPath -Append
-
-        # Installed updates
-        "Installed updates:" | Out-File -FilePath $SummaryPath -Append
-        $updates = $null
-        try { $updates = {{ update_result.updates | default({}) | to_json }} | ConvertFrom-Json } catch {}
-        if ($updates) {
-          foreach ($u in $updates.PSObject.Properties) {
+        "Installed updates:" | Out-File $SummaryPathLocal -Append
+        if ($null -ne $update_result.updates) {
+          foreach ($u in $update_result.updates.GetEnumerator()) {
             if ($u.Value.installed -eq $true) {
-              " - $($u.Value.title) (KB$($u.Value.kb -join ', KB'))" | Out-File -FilePath $SummaryPath -Append
+              " - $($u.Value.title) ($($u.Value.kb -join ', '))" | Out-File $SummaryPathLocal -Append
             }
           }
         } else {
-          " - None" | Out-File -FilePath $SummaryPath -Append
+          " - None" | Out-File $SummaryPathLocal -Append
         }
 
-        # Failed updates
-        "" | Out-File -FilePath $SummaryPath -Append
-        "Failed updates:" | Out-File -FilePath $SummaryPath -Append
-        if ($updates) {
-          foreach ($u in $updates.PSObject.Properties) {
+        "" | Out-File $SummaryPathLocal -Append
+        "Failed updates:" | Out-File $SummaryPathLocal -Append
+        if ($null -ne $update_result.updates) {
+          foreach ($u in $update_result.updates.GetEnumerator()) {
             if ($u.Value.installed -ne $true) {
-              " - $($u.Value.title) (KB$($u.Value.kb -join ', KB'))" | Out-File -FilePath $SummaryPath -Append
+              " - $($u.Value.title) ($($u.Value.kb -join ', '))" | Out-File $SummaryPathLocal -Append
             }
           }
         } else {
-          " - None" | Out-File -FilePath $SummaryPath -Append
+          " - None" | Out-File $SummaryPathLocal -Append
         }
 
-        "" | Out-File -FilePath $SummaryPath -Append
-        "Reboot required: {{ update_result.reboot_required | default(false) }}" | Out-File -FilePath $SummaryPath -Append
-
-        # Cleanup old folders
+        # Attempt to copy to share
         try {
-          $Cutoff = (Get-Date).AddDays(-$CleanupDays)
-          Get-ChildItem -Path $TargetPath -Directory | Where-Object { $_.LastWriteTime -lt $Cutoff } | ForEach-Object {
-            Remove-Item -Recurse -Force -Path $_.FullName
-          }
-        } catch {}
+          Copy-Item -Path $SummaryPathLocal -Destination $SummaryPathShare -Force
+        } catch {
+          Write-Host "⚠️ Unable to copy summary to share; left on local C:\Temp"
+        }
       args:
         executable: powershell
-      vars:
-        SharePath: "{{ share_unc_path }}"
-        User: "{{ share_username | default('') }}"
-        Pass: "{{ share_password | default('') }}"
-        CleanupDays: "{{ cleanup_days }}"
       when: inventory_hostname not in skip_servers
 
     - name: Reboot if required (skip_servers excluded)
       win_reboot:
         reboot_timeout: 3600
-      when: inventory_hostname not in skip_servers and update_result.reboot_required | default(false)
+      when:
+        - inventory_hostname not in skip_servers
+        - update_result.reboot_required | default(false)
