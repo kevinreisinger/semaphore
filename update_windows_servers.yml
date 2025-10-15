@@ -3,9 +3,9 @@
   hosts: windows
   gather_facts: yes
   vars:
+    temp_dir: "C:\\Temp"
     skip_servers:
       - dc08.reisingers.com
-    temp_dir: "C:\\Temp"
     share_unc_path: "\\\\kevireis-home\\i$\\Documents\\Kevin\\Network Documentation\\Server Updates\\"
     share_username: ""
     share_password: ""
@@ -19,7 +19,7 @@
 
     - name: Skip patching/reboot if host is in skip_servers
       debug:
-        msg: "Skipping patching and reboot for {{ inventory_hostname }}"
+        msg: "Skipping updates and reboot for {{ inventory_hostname }}"
       when: inventory_hostname in skip_servers
 
     - name: Install all available updates
@@ -32,9 +32,9 @@
           - Drivers
           - UpdateRollups
           - FeaturePacks
-          - ServicePacks
-          - Tools
           - Updates
+          - Tools
+          - ServicePacks
         reboot: no
       register: update_result
       when: inventory_hostname not in skip_servers
@@ -47,11 +47,13 @@
         "Windows Update Summary for {{ inventory_hostname }}" | Out-File $SummaryPathLocal
         "" | Out-File $SummaryPathLocal -Append
 
-        $jsonUpdates = @'
-{{ update_result.updates | to_nice_json }}
-'@
-
-        $updates = $jsonUpdates | ConvertFrom-Json
+        # Convert update_result.updates to JSON safely inside PowerShell
+        $updatesJson = '{{ update_result.updates | to_json | replace("'", "''") }}'
+        if ($updatesJson -and $updatesJson -ne '{}') {
+            $updates = $updatesJson | ConvertFrom-Json
+        } else {
+            $updates = @{}
+        }
 
         "Installed updates:" | Out-File $SummaryPathLocal -Append
         if ($updates) {
@@ -65,7 +67,6 @@
         }
 
         "" | Out-File $SummaryPathLocal -Append
-
         "Failed updates:" | Out-File $SummaryPathLocal -Append
         if ($updates) {
             foreach ($u in $updates.PSObject.Properties) {
@@ -90,10 +91,9 @@
         executable: powershell
       when: inventory_hostname not in skip_servers
 
-    - name: Reboot if required (skip skip_servers)
+    - name: Reboot if required (skip_servers excluded)
       win_reboot:
-        reboot_timeout: 1800
+        reboot_timeout: 600
       when:
         - inventory_hostname not in skip_servers
         - update_result.reboot_required | bool
-
