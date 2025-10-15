@@ -40,61 +40,101 @@
       register: update_result
       when: inventory_hostname not in skip_servers
 
-    - name: Create per-host update summary file locally and optionally copy to share
+    - name: Create per-host update summary file locally and optionally on share
       win_shell: |
-        $LocalTemp = "C:\Temp"
-        $Timestamp = Get-Date -Format "yyyy-MM-dd_HHmm"
-        $DateFolder = Get-Date -Format "yyyy-MM-dd"
-        $DatePath = Join-Path $LocalTemp $DateFolder
-        if (!(Test-Path $DatePath)) { New-Item -ItemType Directory -Path $DatePath -Force | Out-Null }
+        param(
+          [string]$LocalPath,
+          [string]$SharePath,
+          [string]$User,
+          [string]$Pass,
+          [int]$CleanupDays,
+          [string]$UpdatesJson
+        )
 
-        $SummaryPathLocal = Join-Path $DatePath "{{ inventory_hostname }}_$Timestamp.txt"
+        Write-Host "Starting update summary for host {{ inventory_hostname }}"
 
+        # Default to local path first
+        $SummaryPathLocal = Join-Path $LocalPath "{{ inventory_hostname }}_windows_update_summary.txt"
+
+        # Initialize summary file
         "Windows Update Summary for {{ inventory_hostname }}" | Out-File -FilePath $SummaryPathLocal
         "" | Out-File -FilePath $SummaryPathLocal -Append
 
+        # Parse updates safely
+        if ($UpdatesJson -and $UpdatesJson -ne '{}') {
+            try {
+                $updates = $UpdatesJson | ConvertFrom-Json
+            } catch {
+                Write-Host "⚠️ Failed to parse updates JSON"
+                $updates = @{}
+            }
+        } else {
+            $updates = @{}
+        }
+
+        # Installed updates
         "Installed updates:" | Out-File -FilePath $SummaryPathLocal -Append
-        $updates = {{ update_result.updates | default({}) | to_json }}
-        if ($updates -and $updates -ne "{}") {
-            $parsed = $updates | ConvertFrom-Json
-            foreach ($u in $parsed.PSObject.Properties) {
+        if ($updates.PSObject.Properties.Count -gt 0) {
+            foreach ($u in $updates.PSObject.Properties) {
                 if ($u.Value.installed -eq $true) {
                     " - $($u.Value.title) (KB$($u.Value.kb -join ', KB'))" | Out-File -FilePath $SummaryPathLocal -Append
                 }
             }
-        } else { " - None" | Out-File -FilePath $SummaryPathLocal -Append }
+        } else {
+            " - None" | Out-File -FilePath $SummaryPathLocal -Append
+        }
 
+        # Failed updates
         "" | Out-File -FilePath $SummaryPathLocal -Append
         "Failed updates:" | Out-File -FilePath $SummaryPathLocal -Append
-        if ($updates -and $updates -ne "{}") {
-            foreach ($u in $parsed.PSObject.Properties) {
+        if ($updates.PSObject.Properties.Count -gt 0) {
+            foreach ($u in $updates.PSObject.Properties) {
                 if ($u.Value.installed -ne $true) {
                     " - $($u.Value.title) (KB$($u.Value.kb -join ', KB'))" | Out-File -FilePath $SummaryPathLocal -Append
                 }
             }
-        } else { " - None" | Out-File -FilePath $SummaryPathLocal -Append }
+        } else {
+            " - None" | Out-File -FilePath $SummaryPathLocal -Append
+        }
 
         "" | Out-File -FilePath $SummaryPathLocal -Append
         "Reboot required: {{ update_result.reboot_required | default(false) }}" | Out-File -FilePath $SummaryPathLocal -Append
+        Write-Host "Summary written to $SummaryPathLocal"
 
-        # Copy to share if path is provided
-        if ("{{ share_unc_path }}" -ne "") {
+        # Attempt to copy to share if defined
+        if ($SharePath -and $SharePath -ne "") {
             try {
-                if ("{{ share_username }}" -and "{{ share_password }}") {
-                    $SecurePass = ConvertTo-SecureString "{{ share_password }}" -AsPlainText -Force
-                    $Cred = New-Object System.Management.Automation.PSCredential("{{ share_username }}",$SecurePass)
-                    New-PSDrive -Name Z -PSProvider FileSystem -Root "{{ share_unc_path }}" -Credential $Cred -ErrorAction Stop | Out-Null
-                    Copy-Item -Path $SummaryPathLocal -Destination "Z:" -Force
+                if ($User -and $Pass) {
+                    $SecurePass = ConvertTo-SecureString $Pass -AsPlainText -Force
+                    $Cred = New-Object System.Management.Automation.PSCredential($User, $SecurePass)
+                    New-PSDrive -Name Z -PSProvider FileSystem -Root $SharePath -Credential $Cred -ErrorAction Stop | Out-Null
+                    $Destination = Join-Path Z: (Split-Path $SummaryPathLocal -Leaf)
+                    Copy-Item -Path $SummaryPathLocal -Destination $Destination -Force
                 } else {
-                    Copy-Item -Path $SummaryPathLocal -Destination "{{ share_unc_path }}" -Force
+                    $Destination = Join-Path $SharePath (Split-Path $SummaryPathLocal -Leaf)
+                    Copy-Item -Path $SummaryPathLocal -Destination $Destination -Force
                 }
+                Write-Host "Summary copied to share: $Destination"
             } catch {
-                Write-Host "⚠️ Unable to copy summary to share; left on local C:\Temp"
+                Write-Host "⚠️ Unable to copy summary to share; left on local path"
             }
         }
 
+        # Cleanup old files
+        try {
+            $Cutoff = (Get-Date).AddDays(-$CleanupDays)
+            Get-ChildItem -Path $LocalPath -Filter "*.txt" | Where-Object { $_.LastWriteTime -lt $Cutoff } | Remove-Item -Force
+        } catch {}
+
       args:
         executable: powershell
+      vars:
+        LocalPath: "C:\Temp"
+        SharePath: "{{ share_unc_path }}"
+        User: "{{ share_username | default('') }}"
+        Pass: "{{ share_password | default('') }}"
+        CleanupDays: "{{ cleanup_days }}"
+        UpdatesJson: "{{ update_result.updates | default({}) | to_json | replace('\n','') | replace('\'','\'\'') }}"
       when: inventory_hostname not in skip_servers
 
     - name: Reboot if required (skip_servers excluded)
