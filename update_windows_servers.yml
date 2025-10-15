@@ -1,7 +1,7 @@
 ---
 - name: Windows Updates with Auto Reboot (skip specified hosts)
-  hosts: windows
-  gather_facts: yes
+  hosts: all
+  gather_facts: false
   vars:
     temp_dir: "C:\\Temp"
     skip_servers:
@@ -18,8 +18,8 @@
         state: directory
 
     - name: Skip patching/reboot if host is in skip_servers
-      debug:
-        msg: "Skipping updates and reboot for {{ inventory_hostname }}"
+      set_fact:
+        skip_host: true
       when: inventory_hostname in skip_servers
 
     - name: Install all available updates
@@ -27,19 +27,17 @@
         category_names:
           - SecurityUpdates
           - CriticalUpdates
-          - Definition Updates
-          - Windows Defender
-          - Drivers
+          - DefinitionUpdates
           - UpdateRollups
           - FeaturePacks
-          - Updates
-          - Tools
           - ServicePacks
-        reboot: no
+          - Tools
+          - Updates
+        reboot: yes
       register: update_result
-      when: inventory_hostname not in skip_servers
+      when: skip_host is not defined
 
-    - name: Create per-host update summary file (local + share)
+    - name: Write update summary locally and to share
       win_shell: |
         $SummaryPathLocal = "{{ temp_dir }}\{{ inventory_hostname }}_windows_update_summary.txt"
         $SummaryPathShare = "{{ share_unc_path }}\{{ inventory_hostname }}_windows_update_summary.txt"
@@ -47,12 +45,9 @@
         "Windows Update Summary for {{ inventory_hostname }}" | Out-File $SummaryPathLocal
         "" | Out-File $SummaryPathLocal -Append
 
-        # Convert update_result.updates to JSON safely inside PowerShell
-        $updatesJson = '{{ update_result.updates | to_json | replace("'", "''") }}'
-        if ($updatesJson -and $updatesJson -ne '{}') {
-            $updates = $updatesJson | ConvertFrom-Json
-        } else {
-            $updates = @{}
+        $updates = @{}
+        if ($env:update_result -and $env:update_result -ne "{}") {
+            $updates = $env:update_result | ConvertFrom-Json
         }
 
         "Installed updates:" | Out-File $SummaryPathLocal -Append
@@ -88,12 +83,14 @@
             }
         }
       args:
-        executable: powershell
-      when: inventory_hostname not in skip_servers
+        executable: powershell.exe
+      environment:
+        update_result: "{{ update_result.updates | to_json }}"
+      when: skip_host is not defined
 
-    - name: Reboot if required (skip_servers excluded)
+    - name: Reboot if required
       win_reboot:
-        reboot_timeout: 600
+        reboot_timeout: 1200
       when:
-        - inventory_hostname not in skip_servers
-        - update_result.reboot_required | bool
+        - skip_host is not defined
+        - update_result.reboot_required | default(false)
