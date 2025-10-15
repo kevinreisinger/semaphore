@@ -7,40 +7,28 @@
     skip_servers:
       - dc08.reisingers.com
       - kevireis-vc2.reisingers.com
-    share_unc_path: "\\\\kevireis-home\\i$\\Documents\\Kevin\\Network Documentation\\Server Updates\\"
+    share_unc_path: "\\kevireis-home\i$\Documents\Kevin\Network Documentation\Server Updates\"
     share_username: ""
     share_password: ""
-
   tasks:
+
     - name: Ensure Temp directory exists
       win_file:
         path: "{{ temp_dir }}"
         state: directory
 
-    - name: Determine if host should be skipped
+    - name: Skip patching/reboot if host is in skip_servers
       set_fact:
         skip_this_host: "{{ inventory_hostname in skip_servers }}"
-
-    - name: Skip patching/reboot if host is in skip_servers
-      debug:
-        msg: "Skipping {{ inventory_hostname }}"
-      when: skip_this_host
 
     - name: Install all available updates
       win_updates:
         category_names:
           - SecurityUpdates
           - CriticalUpdates
-          - UpdateRollups
         reboot: no
       register: update_result
       when: not skip_this_host
-
-    - name: Reboot if required (skip_servers excluded)
-      win_reboot:
-      when:
-        - not skip_this_host
-        - update_result.reboot_required | default(false)
 
     - name: Create per-host update summary file locally and on share
       win_shell: |
@@ -88,3 +76,10 @@ Reboot required: $($update_result.reboot_required -eq $true)
             }
         }
       when: not skip_this_host
+
+    - name: Reboot if required (skip_servers excluded)
+      win_reboot:
+        reboot_timeout: 600
+      when:
+        - not skip_this_host
+        - update_result.reboot_required | default(false)
