@@ -26,7 +26,35 @@
         msg: "Skipping patching for host {{ inventory_hostname }}"
       when: inventory_hostname in skip_servers
 
-    - name: Install all available updates
+    - name: Get Windows Release ID
+      win_shell: |
+        (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion").ReleaseId
+      register: windows_release
+      when: inventory_hostname not in skip_servers
+
+    - name: Install updates on Windows Server 2019+ using PSWindowsUpdate
+      win_shell: |
+        # Install PSWindowsUpdate module if not present
+        if (-not (Get-Module -ListAvailable -Name PSWindowsUpdate)) {
+            Install-PackageProvider -Name NuGet -Force -Scope CurrentUser
+            Install-Module -Name PSWindowsUpdate -Force -Scope CurrentUser -AllowClobber
+        }
+
+        # Import module
+        Import-Module PSWindowsUpdate
+
+        # Install all available updates from Microsoft Update, accept all, ignore reboot
+        $Updates = Get-WindowsUpdate -MicrosoftUpdate -IgnoreUserInput -AcceptAll
+        $Updates | Install-WindowsUpdate -MicrosoftUpdate -AcceptAll -IgnoreReboot -Verbose
+
+        # Return installed/failed updates as JSON
+        $Updates | Select-Object Title, KB, Installed | ConvertTo-Json -Compress
+      args:
+        executable: powershell
+      register: update_result
+      when: inventory_hostname not in skip_servers and windows_release.stdout | int >= 1809
+
+    - name: Install updates on older Windows using win_updates
       win_updates:
         category_names:
           - CriticalUpdates
@@ -40,14 +68,9 @@
           - Updates
           - Drivers
         reboot: no
-        state: installed        
+        state: installed
       register: update_result
-      when: inventory_hostname not in skip_servers
-
-    - name: Debug updates detected (optional)
-      debug:
-        var: update_result.updates
-      when: inventory_hostname not in skip_servers
+      when: inventory_hostname not in skip_servers and windows_release.stdout | int < 1809
 
     - name: Create per-host update summary file locally and on share
       win_shell: |
@@ -97,8 +120,8 @@
             "Installed updates:" | Out-File -FilePath $SummaryFile -Append
             if ($Updates -and $Updates.PSObject.Properties.Count -gt 0) {
                 foreach ($u in $Updates.PSObject.Properties) {
-                    if ($u.Value.installed -eq $true) {
-                        " - $($u.Value.title) (KB$($u.Value.kb -join ', KB'))" | Out-File -FilePath $SummaryFile -Append
+                    if ($u.Value.Installed -eq $true) {
+                        " - $($u.Value.Title) (KB$($u.Value.KB -join ', KB'))" | Out-File -FilePath $SummaryFile -Append
                     }
                 }
             } else { " - None" | Out-File -FilePath $SummaryFile -Append }
@@ -108,8 +131,8 @@
             "Failed updates:" | Out-File -FilePath $SummaryFile -Append
             if ($Updates -and $Updates.PSObject.Properties.Count -gt 0) {
                 foreach ($u in $Updates.PSObject.Properties) {
-                    if ($u.Value.installed -ne $true) {
-                        " - $($u.Value.title) (KB$($u.Value.kb -join ', KB'))" | Out-File -FilePath $SummaryFile -Append
+                    if ($u.Value.Installed -ne $true) {
+                        " - $($u.Value.Title) (KB$($u.Value.KB -join ', KB'))" | Out-File -FilePath $SummaryFile -Append
                     }
                 }
             } else { " - None" | Out-File -FilePath $SummaryFile -Append }
