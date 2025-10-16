@@ -1,5 +1,5 @@
 ---
-- name: Windows Updates with Auto Reboot (skip specified hosts, force-install on Server 2019+)
+- name: Windows Updates with Auto Reboot and Full Summary Reporting
   hosts: windows
   gather_facts: yes
   vars:
@@ -9,57 +9,24 @@
       - kevireis-lt.reisingers.com
       - kevireis-vc2.reisingers.com
       - vmwvc1.reisingers.com
-    share_unc_path: "\\\\kevireis-home\\i$\\Documents\\Kevin\\Network Documentation\\Server Updates\\"
+    share_unc_path: "\\\\kevireis-home\\i$\\Documents\\Kevin\\Network Documentation\\Server Updates"
     share_username: ""
     share_password: ""
     cleanup_days: 30
 
   tasks:
 
-    - name: Ensure Temp directory exists
+    - name: Ensure local Temp folder exists
       win_file:
         path: C:\Temp
         state: directory
 
-    - name: Skip patching/reboot if host is in skip_servers
+    - name: Skip servers in skip list
       debug:
         msg: "Skipping patching for host {{ inventory_hostname }}"
       when: inventory_hostname in skip_servers
 
-    - name: Get Windows version (ReleaseId or BuildNumber)
-      win_shell: |
-        (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion").ReleaseId
-      register: win_releaseid
-      when: inventory_hostname not in skip_servers
-
-    - name: Install updates on Server 2019+ using PSWindowsUpdate (force MicrosoftUpdate)
-      win_shell: |
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-
-        # Install PSWindowsUpdate module if missing
-        if (-not (Get-Module -ListAvailable -Name PSWindowsUpdate)) {
-            Install-PackageProvider -Name NuGet -Force -Scope CurrentUser
-            Install-Module -Name PSWindowsUpdate -Force -Scope CurrentUser -AllowClobber
-        }
-
-        Import-Module PSWindowsUpdate
-
-        # Start Windows Update service
-        Start-Service wuauserv -ErrorAction SilentlyContinue
-
-        # Download and install all available updates
-        Get-WindowsUpdate -MicrosoftUpdate -IgnoreUserInput -AcceptAll | `
-          Install-WindowsUpdate -MicrosoftUpdate -AcceptAll -IgnoreReboot -Verbose
-
-        # Output list of installed updates for Ansible capture
-        $updates = Get-WUHistory | Sort-Object Date -Descending | Select-Object -First 20
-        $updates | ConvertTo-Json -Depth 5
-      register: update_result
-      when:
-        - inventory_hostname not in skip_servers
-        - win_releaseid.stdout | int >= 1809
-
-    - name: Install updates on older Windows versions using win_updates
+    - name: Install available Windows updates (skip excluded hosts)
       win_updates:
         category_names:
           - CriticalUpdates
@@ -72,65 +39,115 @@
           - Update Rollups
           - Updates
           - Drivers
-        state: installed
         reboot: no
       register: update_result
-      when:
-        - inventory_hostname not in skip_servers
-        - win_releaseid.stdout | int < 1809
+      when: inventory_hostname not in skip_servers
 
-    - name: Create per-host update summary file on C:\Temp and share
+    - name: Generate Windows Update summary with pending updates and copy to share
       win_shell: |
+        $HostName = "{{ inventory_hostname }}"
         $Timestamp = Get-Date -Format "yyyy-MM-dd_HHmm"
         $DateFolder = Get-Date -Format "yyyy-MM-dd"
-        $HostName = "{{ inventory_hostname }}"
-        $LocalPath = "C:\Temp"
-        $SharePath = "{{ share_unc_path }}"
+        $LocalTemp = "C:\Temp"
+        $ShareUNC = "{{ share_unc_path }}"
+        $SummaryContent = @()
 
-        $SummaryFileLocal = Join-Path $LocalPath "$HostName`_$Timestamp.txt"
-        $SummaryFileShare = Join-Path $SharePath "$DateFolder\$HostName`_$Timestamp.txt"
+        # Ensure local date folder
+        $LocalDatePath = Join-Path $LocalTemp $DateFolder
+        if (!(Test-Path $LocalDatePath)) { New-Item -ItemType Directory -Path $LocalDatePath -Force | Out-Null }
 
-        $UpdatesJson = '{{ update_result.stdout | default("{}") | replace("`n","") | replace("`r","") }}'
-        try { $Updates = $UpdatesJson | ConvertFrom-Json } catch { $Updates = @() }
+        # Header
+        $SummaryContent += "Windows Update Summary for $HostName"
+        $SummaryContent += ""
 
-        $lines = @()
-        $lines += "Windows Update Summary for $HostName"
-        $lines += ""
-        $lines += "Installed Updates:"
-        if ($Updates -and $Updates.Count -gt 0) {
-            foreach ($u in $Updates) {
-                $lines += " - $($u.Title) ($($u.ResultCode)) $($u.Date)"
-            }
-        } else {
-            $lines += " - None"
-        }
-
-        # Write to C:\Temp
-        $lines | Out-File -FilePath $SummaryFileLocal -Force
-
-        # Write to share if available
+        # Installed updates
+        $SummaryContent += "Installed updates:"
         try {
-            if (Test-Path $SharePath) {
-                $DatePath = Join-Path $SharePath $DateFolder
-                if (!(Test-Path $DatePath)) { New-Item -ItemType Directory -Path $DatePath -Force | Out-Null }
-                $lines | Out-File -FilePath $SummaryFileShare -Force
+            $Installed = Get-HotFix | Sort-Object InstalledOn -Descending
+            if ($Installed.Count -gt 0) {
+                foreach ($u in $Installed) {
+                    $SummaryContent += " - $($u.HotFixID) ($($u.Description))"
+                }
+            } else {
+                $SummaryContent += " - None"
             }
         } catch {
-            Write-Host "⚠️ Could not write to share."
+            $SummaryContent += " - Error retrieving installed updates"
         }
 
-        # Cleanup old folders
+        # Failed updates (if PSWindowsUpdate available)
+        $SummaryContent += ""
+        $SummaryContent += "Failed updates:"
         try {
-            $Cutoff = (Get-Date).AddDays(-{{ cleanup_days }})
-            Get-ChildItem -Path $LocalPath -Directory | Where-Object { $_.LastWriteTime -lt $Cutoff } | ForEach-Object {
-                Remove-Item -Recurse -Force -Path $_.FullName
+            if (Get-Command Get-WUHistory -ErrorAction SilentlyContinue) {
+                $Failed = Get-WUHistory | Where-Object { $_.Result -ne "Succeeded" }
+                if ($Failed) {
+                    foreach ($f in $Failed) {
+                        $SummaryContent += " - $($f.Title)"
+                    }
+                } else {
+                    $SummaryContent += " - None"
+                }
+            } else {
+                $SummaryContent += " - N/A (PSWindowsUpdate not available)"
             }
-        } catch {}
+        } catch {
+            $SummaryContent += " - Error retrieving failed updates"
+        }
+
+        # Pending updates
+        $SummaryContent += ""
+        $SummaryContent += "Pending updates:"
+        try {
+            if (Get-Command Get-WindowsUpdate -ErrorAction SilentlyContinue) {
+                $Pending = Get-WindowsUpdate -MicrosoftUpdate -IgnoreUserInput -AcceptAll -WhatIf
+                if ($Pending) {
+                    foreach ($p in $Pending) {
+                        $SummaryContent += " - $($p.Title)"
+                    }
+                } else {
+                    $SummaryContent += " - None"
+                }
+            } else {
+                $SummaryContent += " - N/A (PSWindowsUpdate not available)"
+            }
+        } catch {
+            $SummaryContent += " - Error retrieving pending updates"
+        }
+
+        # Reboot check
+        $RebootRequired = (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending") -or
+                          (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired")
+        $SummaryContent += ""
+        $SummaryContent += "Reboot required: $RebootRequired"
+
+        # Write summary locally
+        $SummaryFileLocal = Join-Path $LocalDatePath "$HostName`_$Timestamp.txt"
+        $SummaryContent | Out-File -FilePath $SummaryFileLocal -Encoding UTF8
+
+        # Copy summary to share
+        try {
+            if ("{{ share_username }}" -ne "" -and "{{ share_password }}" -ne "") {
+                $SecPass = ConvertTo-SecureString "{{ share_password }}" -AsPlainText -Force
+                $Cred = New-Object System.Management.Automation.PSCredential("{{ share_username }}", $SecPass)
+                New-PSDrive -Name Z -PSProvider FileSystem -Root $ShareUNC -Credential $Cred -ErrorAction Stop | Out-Null
+                $SharePath = "Z:\$DateFolder"
+            } else {
+                $SharePath = Join-Path $ShareUNC $DateFolder
+            }
+
+            if (!(Test-Path $SharePath)) { New-Item -ItemType Directory -Path $SharePath -Force | Out-Null }
+            Copy-Item $SummaryFileLocal -Destination $SharePath -Force
+        } catch {
+            Write-Host "⚠️ Could not copy summary to share: $_"
+        }
+
+        Write-Host "✅ Summary written to: $SummaryFileLocal"
       args:
         executable: powershell
       when: inventory_hostname not in skip_servers
 
-    - name: Reboot if required (skip_servers excluded)
+    - name: Reboot if required
       win_reboot:
         reboot_timeout: 3600
-      when: inventory_hostname not in skip_servers
+      when: inventory_hostname not in skip_servers and update_result.reboot_required | default(false)
