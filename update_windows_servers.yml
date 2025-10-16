@@ -122,7 +122,7 @@
       args:
         executable: powershell
       vars:
-        UpdatesJson: '{{ update_result.updates | to_json | replace("\n","") | replace("'","''") }}'
+        UpdatesJson: "{{ update_result.updates | to_json | replace('\n','') | replace('\"','\\\"') }}"
       when: inventory_hostname not in skip_servers
 
     - name: Reboot if required (skip_servers excluded)
