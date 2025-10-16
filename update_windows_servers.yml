@@ -4,7 +4,7 @@
   gather_facts: yes
   vars:
     skip_servers:
-      - dc08.reisingers.com
+      #- dc08.reisingers.com
       - kevireis-home.reisingers.com
       - kevireis-lt.reisingers.com
       - kevireis-vc2.reisingers.com
