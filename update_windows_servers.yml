@@ -40,7 +40,14 @@
           - Updates
           - Drivers
         reboot: no
+        state: installed
+        accept_eula: yes
       register: update_result
+      when: inventory_hostname not in skip_servers
+
+    - name: Debug updates detected (optional)
+      debug:
+        var: update_result.updates
       when: inventory_hostname not in skip_servers
 
     - name: Create per-host update summary file locally and on share
