@@ -4,11 +4,11 @@
   gather_facts: yes
   vars:
     skip_servers:
-      #- dc08.reisingers.com
+      - dc08.reisingers.com
       - kevireis-home.reisingers.com
-      - kevireis-lt.reisingers.com
+      #- kevireis-lt.reisingers.com
       - kevireis-vc2.reisingers.com
-      - vmwvc1.reisingers.com
+      #- vmwvc1.reisingers.com
     share_unc_path: "\\\\kevireis-home\\i$\\Documents\\Kevin\\Network Documentation\\Server Updates"
     share_username: ""
     share_password: ""
