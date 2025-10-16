@@ -40,8 +40,7 @@
           - Updates
           - Drivers
         reboot: no
-        state: installed
-        accept_eula: yes
+        state: installed        
       register: update_result
       when: inventory_hostname not in skip_servers
 
