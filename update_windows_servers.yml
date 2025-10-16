@@ -1,5 +1,5 @@
 ---
-- name: Windows Updates with Auto Reboot and Full Summary Reporting
+- name: Windows Updates with Retry, Auto Report, and Reboot
   hosts: windows
   gather_facts: yes
   vars:
@@ -16,17 +16,17 @@
 
   tasks:
 
-    - name: Ensure local Temp folder exists
+    - name: Ensure C:\Temp exists
       win_file:
         path: C:\Temp
         state: directory
 
-    - name: Skip servers in skip list
+    - name: Skip excluded servers
       debug:
         msg: "Skipping patching for host {{ inventory_hostname }}"
       when: inventory_hostname in skip_servers
 
-    - name: Install available Windows updates (skip excluded hosts)
+    - name: Install Windows updates (initial attempt)
       win_updates:
         category_names:
           - CriticalUpdates
@@ -43,106 +43,119 @@
       register: update_result
       when: inventory_hostname not in skip_servers
 
-    - name: Generate Windows Update summary with pending updates and copy to share
+    - name: Retry failed updates (if any)
+      win_updates:
+        category_names:
+          - CriticalUpdates
+          - SecurityUpdates
+          - Definition Updates
+          - Windows Defender
+          - Feature Packs
+          - Service Packs
+          - Tools
+          - Update Rollups
+          - Updates
+          - Drivers
+        reboot: no
+      register: retry_result
+      when: >
+        inventory_hostname not in skip_servers and
+        (update_result.updates is defined and
+         update_result.updates | dict2items | selectattr('value.installed', 'equalto', false) | list | length > 0)
+
+    - name: Combine update results (merge retry with original)
+      set_fact:
+        final_updates: >-
+          {{
+            (update_result.updates | default({})) |
+            combine(retry_result.updates | default({}), recursive=True)
+          }}
+        final_reboot_required: >-
+          {{
+            (update_result.reboot_required | default(false)) or
+            (retry_result.reboot_required | default(false))
+          }}
+      when: inventory_hostname not in skip_servers
+
+    - name: Generate Windows Update summary (current session only)
       win_shell: |
         $HostName = "{{ inventory_hostname }}"
         $Timestamp = Get-Date -Format "yyyy-MM-dd_HHmm"
         $DateFolder = Get-Date -Format "yyyy-MM-dd"
         $LocalTemp = "C:\Temp"
         $ShareUNC = "{{ share_unc_path }}"
-        $SummaryContent = @()
 
-        # Ensure local date folder
         $LocalDatePath = Join-Path $LocalTemp $DateFolder
         if (!(Test-Path $LocalDatePath)) { New-Item -ItemType Directory -Path $LocalDatePath -Force | Out-Null }
 
-        # Header
-        $SummaryContent += "Windows Update Summary for $HostName"
-        $SummaryContent += ""
+        $UpdateData = '{{ final_updates | to_json | replace("`n","") | replace("`r","") }}' | ConvertFrom-Json
+        $RebootRequired = "{{ final_reboot_required }}"
+
+        $Summary = @()
+        $Summary += "Windows Update Summary for $HostName"
+        $Summary += ""
 
         # Installed updates
-        $SummaryContent += "Installed updates:"
-        try {
-            $Installed = Get-HotFix | Sort-Object InstalledOn -Descending
-            if ($Installed.Count -gt 0) {
-                foreach ($u in $Installed) {
-                    $SummaryContent += " - $($u.HotFixID) ($($u.Description))"
-                }
-            } else {
-                $SummaryContent += " - None"
-            }
-        } catch {
-            $SummaryContent += " - Error retrieving installed updates"
+        $Installed = $UpdateData.GetEnumerator() | Where-Object { $_.Value.installed -eq $true }
+        $Summary += "Installed updates:"
+        if ($Installed) {
+          foreach ($u in $Installed) { $Summary += " - $($u.Value.title)" }
+        } else {
+          $Summary += " - None"
         }
 
-        # Failed updates (if PSWindowsUpdate available)
-        $SummaryContent += ""
-        $SummaryContent += "Failed updates:"
-        try {
-            if (Get-Command Get-WUHistory -ErrorAction SilentlyContinue) {
-                $Failed = Get-WUHistory | Where-Object { $_.Result -ne "Succeeded" }
-                if ($Failed) {
-                    foreach ($f in $Failed) {
-                        $SummaryContent += " - $($f.Title)"
-                    }
-                } else {
-                    $SummaryContent += " - None"
-                }
-            } else {
-                $SummaryContent += " - N/A (PSWindowsUpdate not available)"
-            }
-        } catch {
-            $SummaryContent += " - Error retrieving failed updates"
+        # Failed updates
+        $Failed = $UpdateData.GetEnumerator() | Where-Object { $_.Value.installed -eq $false }
+        $Summary += ""
+        $Summary += "Failed updates:"
+        if ($Failed) {
+          foreach ($f in $Failed) { $Summary += " - $($f.Value.title)" }
+        } else {
+          $Summary += " - None"
         }
 
         # Pending updates
-        $SummaryContent += ""
-        $SummaryContent += "Pending updates:"
+        $Summary += ""
+        $Summary += "Pending updates:"
         try {
-            if (Get-Command Get-WindowsUpdate -ErrorAction SilentlyContinue) {
-                $Pending = Get-WindowsUpdate -MicrosoftUpdate -IgnoreUserInput -AcceptAll -WhatIf
-                if ($Pending) {
-                    foreach ($p in $Pending) {
-                        $SummaryContent += " - $($p.Title)"
-                    }
-                } else {
-                    $SummaryContent += " - None"
-                }
+          if (Get-Command Get-WindowsUpdate -ErrorAction SilentlyContinue) {
+            $Pending = Get-WindowsUpdate -MicrosoftUpdate -IgnoreUserInput -AcceptAll -WhatIf
+            if ($Pending) {
+              foreach ($p in $Pending) { $Summary += " - $($p.Title)" }
             } else {
-                $SummaryContent += " - N/A (PSWindowsUpdate not available)"
+              $Summary += " - None"
             }
+          } else {
+            $Summary += " - PSWindowsUpdate not available"
+          }
         } catch {
-            $SummaryContent += " - Error retrieving pending updates"
+          $Summary += " - Error checking pending updates"
         }
 
-        # Reboot check
-        $RebootRequired = (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending") -or
-                          (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired")
-        $SummaryContent += ""
-        $SummaryContent += "Reboot required: $RebootRequired"
+        $Summary += ""
+        $Summary += "Reboot required: $RebootRequired"
 
-        # Write summary locally
-        $SummaryFileLocal = Join-Path $LocalDatePath "$HostName`_$Timestamp.txt"
-        $SummaryContent | Out-File -FilePath $SummaryFileLocal -Encoding UTF8
+        # Write local summary
+        $SummaryFile = Join-Path $LocalDatePath "$HostName`_$Timestamp.txt"
+        $Summary | Out-File -FilePath $SummaryFile -Encoding UTF8
 
-        # Copy summary to share
+        # Copy to share
         try {
-            if ("{{ share_username }}" -ne "" -and "{{ share_password }}" -ne "") {
-                $SecPass = ConvertTo-SecureString "{{ share_password }}" -AsPlainText -Force
-                $Cred = New-Object System.Management.Automation.PSCredential("{{ share_username }}", $SecPass)
-                New-PSDrive -Name Z -PSProvider FileSystem -Root $ShareUNC -Credential $Cred -ErrorAction Stop | Out-Null
-                $SharePath = "Z:\$DateFolder"
-            } else {
-                $SharePath = Join-Path $ShareUNC $DateFolder
-            }
-
-            if (!(Test-Path $SharePath)) { New-Item -ItemType Directory -Path $SharePath -Force | Out-Null }
-            Copy-Item $SummaryFileLocal -Destination $SharePath -Force
+          if ("{{ share_username }}" -ne "" -and "{{ share_password }}" -ne "") {
+            $SecPass = ConvertTo-SecureString "{{ share_password }}" -AsPlainText -Force
+            $Cred = New-Object System.Management.Automation.PSCredential("{{ share_username }}", $SecPass)
+            New-PSDrive -Name Z -PSProvider FileSystem -Root $ShareUNC -Credential $Cred -ErrorAction Stop | Out-Null
+            $SharePath = "Z:\$DateFolder"
+          } else {
+            $SharePath = Join-Path $ShareUNC $DateFolder
+          }
+          if (!(Test-Path $SharePath)) { New-Item -ItemType Directory -Path $SharePath -Force | Out-Null }
+          Copy-Item $SummaryFile -Destination $SharePath -Force
         } catch {
-            Write-Host "⚠️ Could not copy summary to share: $_"
+          Write-Host "⚠️ Could not copy summary to share: $_"
         }
 
-        Write-Host "✅ Summary written to: $SummaryFileLocal"
+        Write-Host "✅ Summary written to: $SummaryFile"
       args:
         executable: powershell
       when: inventory_hostname not in skip_servers
@@ -150,4 +163,4 @@
     - name: Reboot if required
       win_reboot:
         reboot_timeout: 3600
-      when: inventory_hostname not in skip_servers and update_result.reboot_required | default(false)
+      when: inventory_hostname not in skip_servers and final_reboot_required | bool
