@@ -10,7 +10,7 @@
 
     - name: Create test file via PowerShell (overwrite if exists)
       win_shell: |
-        New-Item -Path "C:\temp\testfile.txt" -ItemType File -Value "Hello again and again from Semaphore (Windows Version)!" -Force
+        New-Item -Path "C:\temp\testfile.txt" -ItemType File -Value "Hello from Semaphore (Windows Version) - 10/17/25!" -Force
 
 
 - name: Copy file to Linux servers
@@ -24,6 +24,6 @@
 
     - name: Copy test file to Linux servers
       copy:
-        content: "Hello again and again from Semaphore (Linux version)!"
+        content: "Hello from Semaphore (Linux version) - 10/17/25!"
         dest: /tmp/testfile.txt
         mode: '0644'
