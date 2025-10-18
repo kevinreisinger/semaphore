@@ -5,8 +5,8 @@
 
   vars:
     speedtest_unc_path: "\\\\kevireis-home\\i$\\Applications\\Utilities\\Ookla\\Speedtest\\"
-    share_username: yourusername
-    share_password: yourpassword
+    share_username: 
+    share_password: 
 
   tasks:
     - name: Copy Speedtest files from UNC share to C:\Windows
