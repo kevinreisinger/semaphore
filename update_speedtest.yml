@@ -1,22 +1,22 @@
 ---
-- name: Update RDC Config
+- name: Update Speedtest
   hosts: windows
   gather_facts: no
 
   vars:
-    rdc_config_unc_path: "\\\\kevireis-home\\i$\\Applications\\Utilities\\Sysinternals\\Remote Desktop Connection Manager\\Reisingers LAN.rdg"
+    speedtest_unc_path: "\\\\kevireis-home\\i$\\Applications\\Utilities\\Ookla\\Speedtest\\"
     share_username: 
     share_password: 
 
   tasks:
-    - name: "Copy RDC Config File from UNC share using PowerShell"
+    - name: "Copy Speedtest file from UNC share using PowerShell"
       win_shell: |
         $User = "{{ share_username }}"
         $Pass = ConvertTo-SecureString "{{ share_password }}" -AsPlainText -Force
         $Cred = New-Object System.Management.Automation.PSCredential($User, $Pass)
 
-        $Source = "{{ rdc_config_unc_path }}"
-        $Destination = "c:\\users\\kevireis\\Documents\\Reisingers LAN.rdg"
+        $Source = "{{ speedtest_unc_path }}"
+        $Destination = "c:\\windows\\"
 
         Write-Host "Copying file from $Source to $Destination..."
 
