@@ -5,18 +5,18 @@
 
   vars:
     speedtest_unc_path: "\\\\kevireis-home\\i$\\Applications\\Utilities\\Ookla\\Speedtest\\"
-    share_username: 
-    share_password: 
+    share_username: yourusername
+    share_password: yourpassword
 
   tasks:
-    - name: "Copy Speedtest files from UNC share to C:\\Windows"
+    - name: Copy Speedtest files from UNC share to C:\Windows
       win_shell: |
-        $User = "{{ share_username }}"
-        $Pass = ConvertTo-SecureString "{{ share_password }}" -AsPlainText -Force
+        $User = '{{ share_username }}'
+        $Pass = ConvertTo-SecureString '{{ share_password }}' -AsPlainText -Force
         $Cred = New-Object System.Management.Automation.PSCredential($User, $Pass)
 
-        $Source = "{{ speedtest_unc_path }}"
-        $Destination = "C:\\Windows\\"
+        $Source = '{{ speedtest_unc_path }}'
+        $Destination = 'C:\Windows\'
 
         Write-Host "Copying contents from $Source to $Destination..."
 
