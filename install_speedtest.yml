@@ -1,5 +1,5 @@
 ---
-- name: Update Speedtest
+- name: Install Speedtest
   hosts: windows
   gather_facts: no
 
