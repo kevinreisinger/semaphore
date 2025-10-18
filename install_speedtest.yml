@@ -11,23 +11,22 @@
   tasks:
     - name: Copy Speedtest files from UNC share to C:\Windows
       win_shell: |
-        $User = '{{ share_username }}'
-        $Pass = ConvertTo-SecureString '{{ share_password }}' -AsPlainText -Force
+        $User = "{{ share_username }}"
+        $Pass = ConvertTo-SecureString "{{ share_password }}" -AsPlainText -Force
         $Cred = New-Object System.Management.Automation.PSCredential($User, $Pass)
-
-        $Source = '{{ speedtest_unc_path }}'
-        $Destination = 'C:\Windows\'
+        $Source = "{{ speedtest_unc_path }}"
+        $Destination = "C:\Windows\"
 
         Write-Host "Copying contents from $Source to $Destination..."
 
         # Map share temporarily
-        net use \\kevireis-home\i$ $($Cred.GetNetworkCredential().Password) /user:$($Cred.UserName) /persistent:no | Out-Null
+        cmd /c "net use \\kevireis-home\i$ {{ share_password }} /user:{{ share_username }} /persistent:no"
 
         # Copy only the contents (not the folder itself)
         Copy-Item -Path (Join-Path $Source '*') -Destination $Destination -Recurse -Force
 
         # Remove the mapping
-        net use \\kevireis-home\i$ /delete | Out-Null
+        cmd /c "net use \\kevireis-home\i$ /delete /y"
 
         Write-Host "Files copied successfully to $Destination"
       args:
