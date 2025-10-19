@@ -1,35 +1,31 @@
 ---
-- name: Install Speedtest
+- name: Install Putty
   hosts: windows
   gather_facts: no
 
   vars:
-    speedtest_unc_path: "\\\\kevireis-home\\i$\\Applications\\Utilities\\Ookla\\Speedtest\\"
+    putty_remote_path: "C:\\Windows\\putty.exe"
+    putty_unc_path: "\\\\kevireis-home\\i$\\Applications\\Telnet Clients\\Putty\\v0.83\\putty.exe"
     share_username: 
     share_password: 
 
   tasks:
-    - name: Copy all Speedtest files from network share to C:\Windows
+    - name: "Copy PuTTY.exe from UNC share using PowerShell"
       win_shell: |
-        {% raw %}
         $User = "{{ share_username }}"
         $Pass = ConvertTo-SecureString "{{ share_password }}" -AsPlainText -Force
-        $Cred = New-Object System.Management.Automation.PSCredential($User, $Pass)
+        $Cred = New-Object System.Management.Automation.PSCredential($User,$Pass)
 
-        $Source = "{{ speedtest_unc_path }}"
-        $Destination = "C:\Windows\"
+        $Source = "{{ putty_unc_path }}"
+        $Destination = "{{ putty_remote_path }}"
 
-        Write-Host "Mapping network share..."
-        cmd /c 'net use \\\\kevireis-home\\i$ {{ share_password }} /user:{{ share_username }} /persistent:no' | Out-Null
+        # Map the share temporarily
+        net use \\kevireis-home\i$ $($Cred.GetNetworkCredential().Password) /user:$($Cred.UserName) /persistent:no
 
-        Write-Host "Copying all files from $Source to $Destination..."
-        # Copy all files and folders from within Speedtest (not the folder itself)
-        Copy-Item -Path (Join-Path $Source '*') -Destination $Destination -Recurse -Force -ErrorAction Stop
+        # Copy the file, overwrite if it exists
+        Copy-Item -Path $Source -Destination $Destination -Force
 
-        Write-Host "Cleaning up network mapping..."
-        cmd /c 'net use \\\\kevireis-home\\i$ /delete /y' | Out-Null
-
-        Write-Host "✅ All Speedtest files successfully copied to $Destination"
-        {% endraw %}
+        # Remove the mapping
+        net use \\kevireis-home\i$ /delete
       args:
         executable: powershell
