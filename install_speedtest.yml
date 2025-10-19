@@ -11,23 +11,21 @@
   tasks:
     - name: Copy Speedtest files from UNC share to C:\Windows
       win_shell: |
-        $env:USER = $env:ANSIBLE_USER
-        $Source = $env:SPEEDTEST_UNC_PATH
-        $Destination = 'C:\Windows\'
-        $Username = $env:SHARE_USERNAME
-        $Password = $env:SHARE_PASSWORD
+        $User = "{{ share_username }}"
+        $Pass = ConvertTo-SecureString "{{ share_password }}" -AsPlainText -Force
+        $Cred = New-Object System.Management.Automation.PSCredential($User, $Pass)
+
+        $Source = "{{ speedtest_unc_path }}"
+        $Destination = "C:\Windows\"
 
         Write-Host "Copying contents from $Source to $Destination..."
 
-        cmd /c "net use \\kevireis-home\i$ $Password /user:$Username /persistent:no"
+        cmd /c 'net use \\\\kevireis-home\\i$ {{ share_password }} /user:{{ share_username }} /persistent:no'
 
         Copy-Item -Path (Join-Path $Source '*') -Destination $Destination -Recurse -Force
 
-        cmd /c "net use \\kevireis-home\i$ /delete /y"
+        cmd /c 'net use \\\\kevireis-home\\i$ /delete /y'
+
         Write-Host "Files copied successfully to $Destination"
-      environment:
-        SPEEDTEST_UNC_PATH: "{{ speedtest_unc_path }}"
-        SHARE_USERNAME: "{{ share_username }}"
-        SHARE_PASSWORD: "{{ share_password }}"
       args:
         executable: powershell
