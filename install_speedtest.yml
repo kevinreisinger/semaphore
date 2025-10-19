@@ -5,7 +5,7 @@
 
   vars:
     speedtest_remote_path: "C:\\Windows\\Speedtest.exe"
-    speedtest_unc_path: "\\\\kevireis-home\\i$\\Applications\\Ookla\\Speedtest\\Speedtest.exe"
+    speedtest_unc_path: "\\\\kevireis-home\\i$\\Applications\\Utilities\\Ookla\\Speedtest\\Speedtest.exe"
     share_username: 
     share_password: 
 
