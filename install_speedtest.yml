@@ -4,26 +4,30 @@
   gather_facts: no
 
   vars:
-    speedtest_remote_path: "C:\\Windows\\speedtest.exe"
-    speedtest_unc_path: "\\\\kevireis-home\\i$\\Applications\\Utilities\\Ookla\\Speedtest\\speedtest.exe"
+    # Set the destination folder to C:\Windows
+    speedtest_remote_path: "C:\\Windows\\" 
+    # Set the source to the folder containing all files
+    speedtest_unc_path: "\\\\kevireis-home\\i$\\Applications\\Utilities\\Ookla\\Speedtest\\"
     share_username: 
     share_password: 
 
   tasks:
-    - name: "Copy Speedtest from UNC share using PowerShell"
+    - name: "Copy ALL files from Speedtest folder on UNC share"
       win_shell: |
         $User = "{{ share_username }}"
         $Pass = ConvertTo-SecureString "{{ share_password }}" -AsPlainText -Force
         $Cred = New-Object System.Management.Automation.PSCredential($User,$Pass)
 
-        $Source = "{{ speedtest_unc_path }}"
-        $Destination = "{{ speedtest_remote_path }}"
+        $SourceFolder = "{{ speedtest_unc_path }}"
+        $DestinationFolder = "{{ speedtest_remote_path }}"
 
         # Map the share temporarily
         net use \\kevireis-home\i$ $($Cred.GetNetworkCredential().Password) /user:$($Cred.UserName) /persistent:no
 
-        # Copy the file, overwrite if it exists
-        Copy-Item -Path $Source -Destination $Destination -Force
+        # Use the wildcard '*' to copy all files AND subdirectories from the source folder
+        # The -Recurse parameter ensures all subdirectories and their contents are copied
+        # The -Force parameter ensures files are overwritten if they already exist
+        Copy-Item -Path "$SourceFolder\*" -Destination "$DestinationFolder" -Recurse -Force
 
         # Remove the mapping
         net use \\kevireis-home\i$ /delete
