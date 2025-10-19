@@ -11,6 +11,7 @@
   tasks:
     - name: Copy Speedtest files from UNC share to C:\Windows
       win_shell: |
+        {% raw %}
         $User = "{{ share_username }}"
         $Pass = ConvertTo-SecureString "{{ share_password }}" -AsPlainText -Force
         $Cred = New-Object System.Management.Automation.PSCredential($User, $Pass)
@@ -27,5 +28,6 @@
         cmd /c 'net use \\\\kevireis-home\\i$ /delete /y'
 
         Write-Host "Files copied successfully to $Destination"
+        {% endraw %}
       args:
         executable: powershell
