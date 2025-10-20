@@ -67,6 +67,7 @@
       when: inventory_hostname not in skip_servers
 
 
+    # The comment causing the error has been removed from the 'when' block.
     - name: Retry failed updates (if any)
       win_updates:
         category_names:
@@ -77,10 +78,8 @@
       register: retry_result
       when: >
         inventory_hostname not in skip_servers and
-        (update_result.updates is defined and
-        # --- FIX 4: Check if any updates were detected and NOT installed ---
-        # Changed logic to confirm if installation failed on the first pass
-        update_result.updates | dict2items | selectattr('value.installed', 'equalto', false) | list | length > 0)
+        update_result.updates is defined and
+        (update_result.updates | dict2items | selectattr('value.installed', 'equalto', false) | list | length > 0)
 
 
     - name: Combine update results (merge retry with original)
