@@ -112,9 +112,9 @@
         $LocalDatePath = Join-Path $LocalTemp $DateFolder
         if (!(Test-Path $LocalDatePath)) { New-Item -ItemType Directory -Path $LocalDatePath -Force | Out-Null }
 
-        # FIX: Simplified JSON passing to prevent Ansible parser error.
-        # Use standard \n and \r replacement within Jinja.
-        $UpdateData = '{{ final_updates | to_json | replace("\n", "") | replace("\r", "") }}' | ConvertFrom-Json
+        # FIX: Removed the replace filters to prevent Ansible parser errors from backslashes.
+        # PowerShell's ConvertFrom-Json can typically handle newlines in the input string.
+        $UpdateData = '{{ final_updates | to_json }}' | ConvertFrom-Json
         $RebootRequired = "{{ final_reboot_required }}"
         $SummaryFile = Join-Path $LocalDatePath "$HostName`_$Timestamp.txt"
 
