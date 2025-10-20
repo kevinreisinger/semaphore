@@ -1,0 +1,182 @@
+---
+- name: Windows Updates with Retry, Auto Report, and Reboot
+  hosts: windows
+  gather_facts: yes
+  vars:
+    # IMPORTANT: Ensure share_username and share_password are set in Ansible Vault
+    # These are left blank here for security, but MUST contain credentials for the share
+    skip_servers:
+      - dc08.reisingers.com
+      - kevireis-home.reisingers.com
+      - kevireis-lt.reisingers.com
+      - kevireis-vc2.reisingers.com
+      - vmwvc1.reisingers.com
+    share_unc_path: "\\\\kevireis-home\\i$\\Documents\\Kevin\\Network Documentation\\Server Updates"
+    share_username: ""
+    share_password: ""
+    cleanup_days: 30
+
+  tasks:
+
+    - name: Ensure C:\Temp exists
+      win_file:
+        path: C:\Temp
+        state: directory
+
+    - name: Skip excluded servers
+      debug:
+        msg: "Skipping patching for host {{ inventory_hostname }}"
+      when: inventory_hostname in skip_servers
+
+    # --- FIX 1: Clear Cached Update Metadata ---
+    - name: Stop Windows Update Service and clear metadata cache
+      win_service:
+        name: wuauserv
+        state: stopped
+        start_mode: auto
+      # We always run this to ensure a clean slate before searching for updates
+      when: inventory_hostname not in skip_servers
+      
+    - name: Delete SoftwareDistribution folder (clears cached metadata)
+      win_file:
+        path: C:\Windows\SoftwareDistribution
+        state: absent
+      when: inventory_hostname not in skip_servers
+      
+    - name: Start Windows Update Service
+      win_service:
+        name: wuauserv
+        state: started
+      when: inventory_hostname not in skip_servers
+
+
+    - name: Install Windows updates (initial attempt)
+      win_updates:
+        # --- FIX 2: Use "critical" and "security" only initially for stability ---
+        category_names:
+          - CriticalUpdates
+          - SecurityUpdates
+          # Removed the wide range of categories like Feature Packs, Drivers, etc.
+          # These often require specific sequencing and can cause failures.
+        reboot: no
+        # --- FIX 3: Force the update search to ensure fresh data is used ---
+        # The reboot_timeout forces the task to wait long enough for the search
+        # and installation to complete, even if no reboot is requested.
+        reboot_timeout: 900 
+      register: update_result
+      when: inventory_hostname not in skip_servers
+
+
+    # The comment causing the error has been removed from the 'when' block.
+    - name: Retry failed updates (if any)
+      win_updates:
+        category_names:
+          - CriticalUpdates
+          - SecurityUpdates
+        reboot: no
+        reboot_timeout: 900 # Use timeout here as well
+      register: retry_result
+      when: >
+        inventory_hostname not in skip_servers and
+        update_result.updates is defined and
+        (update_result.updates | dict2items | selectattr('value.installed', 'equalto', false) | list | length > 0)
+
+
+    - name: Combine update results (merge retry with original)
+      set_fact:
+        final_updates: >-
+          {{
+            (update_result.updates | default({})) |
+            combine(retry_result.updates | default({}), recursive=True)
+          }}
+        final_reboot_required: >-
+          {{
+            (update_result.reboot_required | default(false)) or
+            (retry_result.reboot_required | default(false))
+          }}
+      when: inventory_hostname not in skip_servers
+
+
+    # --- LOGGING TASK ADDED ---
+    - name: Generate detailed summary log and copy to UNC share
+      win_shell: |
+        $HostName = "{{ inventory_hostname }}"
+        $Timestamp = Get-Date -Format "yyyy-MM-dd_HHmmss"
+        $DateFolder = Get-Date -Format "yyyy-MM-dd"
+        $LocalTemp = "C:\Temp"
+        $ShareUNC = "{{ share_unc_path }}"
+        $ShareUser = "{{ share_username }}"
+        $SharePass = "{{ share_password }}"
+
+        # --- 1. Create Local File ---
+        $LocalDatePath = Join-Path $LocalTemp $DateFolder
+        if (!(Test-Path $LocalDatePath)) { New-Item -ItemType Directory -Path $LocalDatePath -Force | Out-Null }
+
+        $UpdateData = '{{ final_updates | to_json | replace("`n","") | replace("`r","") }}' | ConvertFrom-Json
+        $RebootRequired = "{{ final_reboot_required }}"
+        $SummaryFile = Join-Path $LocalDatePath "$HostName`_$Timestamp.txt"
+
+        $Summary = @()
+        $Summary += "Windows Update Summary for $HostName"
+        $Summary += "--------------------------------------------------------"
+        $Summary += "Run Date/Time: $(Get-Date)"
+        $Summary += "Reboot required: $RebootRequired"
+        $Summary += ""
+        
+        $Installed = $UpdateData.GetEnumerator() | Where-Object { $_.Value.installed -eq $true }
+        $Summary += "INSTALLED UPDATES ($($Installed.Count) Total):"
+        if ($Installed) {
+          foreach ($u in $Installed) { $Summary += " - $($u.Value.title)" }
+        } else {
+          $Summary += " - None installed in this session."
+        }
+
+        $Summary += ""
+        $Failed = $UpdateData.GetEnumerator() | Where-Object { $_.Value.installed -eq $false }
+        $Summary += "FAILED/PENDING UPDATES ($($Failed.Count) Total):"
+        if ($Failed) {
+          foreach ($f in $Failed) { $Summary += " - $($f.Value.title)" }
+        } else {
+          $Summary += " - None failed/pending."
+        }
+        
+        $Summary | Out-File -FilePath $SummaryFile -Encoding UTF8
+        Write-Host "✅ Local Summary written to: $SummaryFile"
+
+        # --- 2. Copy to UNC Share (requires credentials/access) ---
+        if ($ShareUser -ne "" -and $SharePass -ne "") {
+          try {
+            # Use net use to map the share temporarily with explicit credentials
+            $SecPass = ConvertTo-SecureString $SharePass -AsPlainText -Force
+            $Cred = New-Object System.Management.Automation.PSCredential($ShareUser, $SecPass)
+            
+            # Extract the share name for net use
+            $ShareRoot = $ShareUNC -replace "^\\\\([^\\]+)\\([^\\]+)\\.*$", "\\\$1\\$2"
+
+            net use $ShareRoot $SharePass /user:$ShareUser /persistent:no | Out-Null
+            
+            $SharePath = Join-Path $ShareUNC $DateFolder
+            
+            # Create remote date folder
+            if (!(Test-Path $SharePath)) { New-Item -ItemType Directory -Path $SharePath -Force | Out-Null }
+            
+            Copy-Item $SummaryFile -Destination $SharePath -Force
+            net use $ShareRoot /delete /y | Out-Null
+            Write-Host "✅ Summary copied to share: $SharePath"
+
+          } catch {
+            Write-Host "⚠️ Could not copy summary to share: $($_.Exception.Message)"
+          }
+        } else {
+          Write-Host "⚠️ Skipping share copy: No credentials provided."
+        }
+
+      args:
+        executable: powershell
+      when: inventory_hostname not in skip_servers and final_updates is defined
+
+
+    - name: Reboot if required
+      win_reboot:
+        reboot_timeout: 3600
+      when: inventory_hostname not in skip_servers and final_reboot_required | bool
