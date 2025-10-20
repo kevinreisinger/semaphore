@@ -96,17 +96,83 @@
           }}
       when: inventory_hostname not in skip_servers
 
-    - name: Generate Windows Update summary
-      # Skipping the win_shell task for now as it's overly complex and relies on PSWindowsUpdate which might not be installed.
-      # A simple report based on Ansible facts is more reliable.
-      # If you need to keep the PS logic, you must ensure PSWindowsUpdate is installed on all target servers.
-      debug:
-        msg: |
-          Update Status for {{ inventory_hostname }}:
-          - Reboot Required: {{ final_reboot_required }}
-          - Total Updates Found: {{ final_updates | length }}
-          - Installed Updates: {{ final_updates | dict2items | selectattr('value.installed', 'equalto', true) | list | length }}
-          - Failed/Pending Updates: {{ final_updates | dict2items | selectattr('value.installed', 'equalto', false) | list | length }}
+
+    # --- LOGGING TASK ADDED ---
+    - name: Generate detailed summary log and copy to UNC share
+      win_shell: |
+        $HostName = "{{ inventory_hostname }}"
+        $Timestamp = Get-Date -Format "yyyy-MM-dd_HHmmss"
+        $DateFolder = Get-Date -Format "yyyy-MM-dd"
+        $LocalTemp = "C:\Temp"
+        $ShareUNC = "{{ share_unc_path }}"
+        $ShareUser = "{{ share_username }}"
+        $SharePass = "{{ share_password }}"
+
+        # --- 1. Create Local File ---
+        $LocalDatePath = Join-Path $LocalTemp $DateFolder
+        if (!(Test-Path $LocalDatePath)) { New-Item -ItemType Directory -Path $LocalDatePath -Force | Out-Null }
+
+        $UpdateData = '{{ final_updates | to_json | replace("`n","") | replace("`r","") }}' | ConvertFrom-Json
+        $RebootRequired = "{{ final_reboot_required }}"
+        $SummaryFile = Join-Path $LocalDatePath "$HostName`_$Timestamp.txt"
+
+        $Summary = @()
+        $Summary += "Windows Update Summary for $HostName"
+        $Summary += "--------------------------------------------------------"
+        $Summary += "Run Date/Time: $(Get-Date)"
+        $Summary += "Reboot required: $RebootRequired"
+        $Summary += ""
+        
+        $Installed = $UpdateData.GetEnumerator() | Where-Object { $_.Value.installed -eq $true }
+        $Summary += "INSTALLED UPDATES ($($Installed.Count) Total):"
+        if ($Installed) {
+          foreach ($u in $Installed) { $Summary += " - $($u.Value.title)" }
+        } else {
+          $Summary += " - None installed in this session."
+        }
+
+        $Summary += ""
+        $Failed = $UpdateData.GetEnumerator() | Where-Object { $_.Value.installed -eq $false }
+        $Summary += "FAILED/PENDING UPDATES ($($Failed.Count) Total):"
+        if ($Failed) {
+          foreach ($f in $Failed) { $Summary += " - $($f.Value.title)" }
+        } else {
+          $Summary += " - None failed/pending."
+        }
+        
+        $Summary | Out-File -FilePath $SummaryFile -Encoding UTF8
+        Write-Host "✅ Local Summary written to: $SummaryFile"
+
+        # --- 2. Copy to UNC Share (requires credentials/access) ---
+        if ($ShareUser -ne "" -and $SharePass -ne "") {
+          try {
+            # Use net use to map the share temporarily with explicit credentials
+            $SecPass = ConvertTo-SecureString $SharePass -AsPlainText -Force
+            $Cred = New-Object System.Management.Automation.PSCredential($ShareUser, $SecPass)
+            
+            # Extract the share name for net use
+            $ShareRoot = $ShareUNC -replace "^\\\\([^\\]+)\\([^\\]+)\\.*$", "\\\$1\\$2"
+
+            net use $ShareRoot $SharePass /user:$ShareUser /persistent:no | Out-Null
+            
+            $SharePath = Join-Path $ShareUNC $DateFolder
+            
+            # Create remote date folder
+            if (!(Test-Path $SharePath)) { New-Item -ItemType Directory -Path $SharePath -Force | Out-Null }
+            
+            Copy-Item $SummaryFile -Destination $SharePath -Force
+            net use $ShareRoot /delete /y | Out-Null
+            Write-Host "✅ Summary copied to share: $SharePath"
+
+          } catch {
+            Write-Host "⚠️ Could not copy summary to share: $($_.Exception.Message)"
+          }
+        } else {
+          Write-Host "⚠️ Skipping share copy: No credentials provided."
+        }
+
+      args:
+        executable: powershell
       when: inventory_hostname not in skip_servers and final_updates is defined
 
 
