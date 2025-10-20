@@ -97,7 +97,7 @@
       when: inventory_hostname not in skip_servers
 
 
-    # --- LOGGING TASK ADDED ---
+    # --- LOGGING TASK MODIFIED FOR ROBUST SHARE ACCESS ---
     - name: Generate detailed summary log and copy to UNC share
       win_shell: |
         $HostName = "{{ inventory_hostname }}"
@@ -150,9 +150,13 @@
             $SecPass = ConvertTo-SecureString $SharePass -AsPlainText -Force
             $Cred = New-Object System.Management.Automation.PSCredential($ShareUser, $SecPass)
             
-            # Extract the share name for net use
-            $ShareRoot = $ShareUNC -replace "^\\\\([^\\]+)\\([^\\]+)\\.*$", "\\\$1\\$2"
+            # --- MODIFIED LOGIC: Find the root share by splitting the path ---
+            # Splits the path into parts, takes the first three (server, share name)
+            # and joins them back.
+            $ShareParts = $ShareUNC.Split('\') | Where-Object { $_ }
+            $ShareRoot = "\\$($ShareParts[0])\$($ShareParts[1])"
 
+            # Use net use with the determined ShareRoot
             net use $ShareRoot $SharePass /user:$ShareUser /persistent:no | Out-Null
             
             $SharePath = Join-Path $ShareUNC $DateFolder
