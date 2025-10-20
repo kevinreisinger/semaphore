@@ -1,0 +1,166 @@
+---
+- name: Windows Updates with Retry, Auto Report, and Reboot
+  hosts: windows
+  gather_facts: yes
+  vars:
+    skip_servers:
+      - dc08.reisingers.com
+      - kevireis-home.reisingers.com
+      - kevireis-lt.reisingers.com
+      - kevireis-vc2.reisingers.com
+      - vmwvc1.reisingers.com
+    share_unc_path: "\\\\kevireis-home\\i$\\Documents\\Kevin\\Network Documentation\\Server Updates"
+    share_username: ""
+    share_password: ""
+    cleanup_days: 30
+
+  tasks:
+
+    - name: Ensure C:\Temp exists
+      win_file:
+        path: C:\Temp
+        state: directory
+
+    - name: Skip excluded servers
+      debug:
+        msg: "Skipping patching for host {{ inventory_hostname }}"
+      when: inventory_hostname in skip_servers
+
+    - name: Install Windows updates (initial attempt)
+      win_updates:
+        category_names:
+          - CriticalUpdates
+          - SecurityUpdates
+          - Definition Updates
+          - Windows Defender
+          - Feature Packs
+          - Service Packs
+          - Tools
+          - Update Rollups
+          - Updates
+          - Drivers
+        reboot: no
+      register: update_result
+      when: inventory_hostname not in skip_servers
+
+    - name: Retry failed updates (if any)
+      win_updates:
+        category_names:
+          - CriticalUpdates
+          - SecurityUpdates
+          - Definition Updates
+          - Windows Defender
+          - Feature Packs
+          - Service Packs
+          - Tools
+          - Update Rollups
+          - Updates
+          - Drivers
+        reboot: no
+      register: retry_result
+      when: >
+        inventory_hostname not in skip_servers and
+        (update_result.updates is defined and
+         update_result.updates | dict2items | selectattr('value.installed', 'equalto', false) | list | length > 0)
+
+    - name: Combine update results (merge retry with original)
+      set_fact:
+        final_updates: >-
+          {{
+            (update_result.updates | default({})) |
+            combine(retry_result.updates | default({}), recursive=True)
+          }}
+        final_reboot_required: >-
+          {{
+            (update_result.reboot_required | default(false)) or
+            (retry_result.reboot_required | default(false))
+          }}
+      when: inventory_hostname not in skip_servers
+
+    - name: Generate Windows Update summary (current session only)
+      win_shell: |
+        $HostName = "{{ inventory_hostname }}"
+        $Timestamp = Get-Date -Format "yyyy-MM-dd_HHmm"
+        $DateFolder = Get-Date -Format "yyyy-MM-dd"
+        $LocalTemp = "C:\Temp"
+        $ShareUNC = "{{ share_unc_path }}"
+
+        $LocalDatePath = Join-Path $LocalTemp $DateFolder
+        if (!(Test-Path $LocalDatePath)) { New-Item -ItemType Directory -Path $LocalDatePath -Force | Out-Null }
+
+        $UpdateData = '{{ final_updates | to_json | replace("`n","") | replace("`r","") }}' | ConvertFrom-Json
+        $RebootRequired = "{{ final_reboot_required }}"
+
+        $Summary = @()
+        $Summary += "Windows Update Summary for $HostName"
+        $Summary += ""
+
+        # Installed updates
+        $Installed = $UpdateData.GetEnumerator() | Where-Object { $_.Value.installed -eq $true }
+        $Summary += "Installed updates:"
+        if ($Installed) {
+          foreach ($u in $Installed) { $Summary += " - $($u.Value.title)" }
+        } else {
+          $Summary += " - None"
+        }
+
+        # Failed updates
+        $Failed = $UpdateData.GetEnumerator() | Where-Object { $_.Value.installed -eq $false }
+        $Summary += ""
+        $Summary += "Failed updates:"
+        if ($Failed) {
+          foreach ($f in $Failed) { $Summary += " - $($f.Value.title)" }
+        } else {
+          $Summary += " - None"
+        }
+
+        # Pending updates
+        $Summary += ""
+        $Summary += "Pending updates:"
+        try {
+          if (Get-Command Get-WindowsUpdate -ErrorAction SilentlyContinue) {
+            $Pending = Get-WindowsUpdate -MicrosoftUpdate -IgnoreUserInput -AcceptAll -WhatIf
+            if ($Pending) {
+              foreach ($p in $Pending) { $Summary += " - $($p.Title)" }
+            } else {
+              $Summary += " - None"
+            }
+          } else {
+            $Summary += " - PSWindowsUpdate not available"
+          }
+        } catch {
+          $Summary += " - Error checking pending updates"
+        }
+
+        $Summary += ""
+        $Summary += "Reboot required: $RebootRequired"
+
+        # Write local summary
+        $SummaryFile = Join-Path $LocalDatePath "$HostName`_$Timestamp.txt"
+        $Summary | Out-File -FilePath $SummaryFile -Encoding UTF8
+
+        # Copy to share
+        try {
+          if ("{{ share_username }}" -ne "" -and "{{ share_password }}" -ne "") {
+            $SecPass = ConvertTo-SecureString "{{ share_password }}" -AsPlainText -Force
+            $Cred = New-Object System.Management.Automation.PSCredential("{{ share_username }}", $SecPass)
+            New-PSDrive -Name Z -PSProvider FileSystem -Root $ShareUNC -Credential $Cred -ErrorAction Stop | Out-Null
+            $SharePath = "Z:\$DateFolder"
+          } else {
+            $SharePath = Join-Path $ShareUNC $DateFolder
+          }
+          if (!(Test-Path $SharePath)) { New-Item -ItemType Directory -Path $SharePath -Force | Out-Null }
+          Copy-Item $SummaryFile -Destination $SharePath -Force
+        } catch {
+          Write-Host "⚠️ Could not copy summary to share: $_"
+        }
+
+        Write-Host "✅ Summary written to: $SummaryFile"
+      args:
+        executable: powershell
+      when: inventory_hostname not in skip_servers
+
+    - name: Reboot if required
+      win_reboot:
+        reboot_timeout: 3600
+      when: inventory_hostname not in skip_servers and final_reboot_required | bool
