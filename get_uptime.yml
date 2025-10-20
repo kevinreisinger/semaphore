@@ -1,0 +1,47 @@
+---
+- name: Get Uptime for Linux/Unix Servers
+  hosts: linux_servers # Change this to your actual Linux group name (e.g., 'linux')
+  gather_facts: yes
+  
+  tasks:
+    - name: Fetch system facts (including uptime_seconds)
+      # The setup module runs automatically due to gather_facts: yes, 
+      # but we explicitly call it here to ensure data is fresh if needed.
+      ansible.builtin.setup:
+        filter: "ansible_uptime_seconds"
+      # The uptime value is stored in the fact ansible_uptime_seconds
+      
+    - name: Display Linux Uptime
+      ansible.builtin.debug:
+        msg: |
+          Server: {{ inventory_hostname }}
+          OS Family: {{ ansible_os_family }}
+          Uptime Seconds: {{ ansible_uptime_seconds }}
+          # Convert seconds to a human-readable format for easier viewing
+          Uptime Human Readable: {{ (ansible_uptime_seconds / 86400) | round(2) }} days
+
+- name: Get Uptime for Windows Servers
+  hosts: windows # Change this to your actual Windows group name (e.g., 'windows')
+  gather_facts: no # facts are not required, only the command output
+
+  tasks:
+    - name: Execute systeminfo to find boot time
+      # The 'systeminfo' command is used to get the system start time, 
+      # which allows for calculating uptime manually.
+      ansible.windows.win_shell: |
+        $LastBootTime = (Get-CimInstance -ClassName Win32_OperatingSystem).LastBootUpTime
+        $Uptime = (Get-Date) - $LastBootTime
+        
+        # Format the output as a simple string containing total days and hours
+        $UptimeString = "$($Uptime.Days) days, $($Uptime.Hours) hours"
+        
+        # Output the formatted string to standard output, which Ansible captures
+        Write-Output $UptimeString
+      register: windows_uptime_output
+
+    - name: Display Windows Uptime
+      ansible.builtin.debug:
+        msg: |
+          Server: {{ inventory_hostname }}
+          OS Family: Windows
+          Uptime: {{ windows_uptime_output.stdout_lines[0] | default("N/A") }}
