@@ -8,7 +8,7 @@
     - name: Execute repadmin /showrepl command
       ansible.windows.win_shell: |
         # Use repadmin to show replication status
-        & repadmin /showrepl $env:COMPUTERNAME
+        & repadmin /replsummary $env:COMPUTERNAME
       register: replication_output
       # Ignore non-zero return codes (rc=1) which are common for repadmin even on success.
       failed_when: false
