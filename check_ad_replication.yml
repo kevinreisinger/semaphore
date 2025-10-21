@@ -10,6 +10,8 @@
         # This is a standard check for AD health and replication issues.
         & repadmin /showrepl $env:COMPUTERNAME
       register: replication_output
+      # FIX: Ignore non-zero return codes (rc=1) which are common for repadmin even on success.
+      failed_when: false
 
     - name: Display Replication Status
       ansible.builtin.debug:
