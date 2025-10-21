@@ -1,0 +1,26 @@
+---
+- name: Check Active Directory Replication Status
+  hosts: domain_controllers
+  gather_facts: no
+
+  tasks:
+    - name: Execute repadmin /showrepl command
+      ansible.windows.win_shell: |
+        # Use repadmin to show replication status, pipe the output to Out-String
+        # This is a standard check for AD health and replication issues.
+        & repadmin /showrepl $env:COMPUTERNAME
+      register: replication_output
+
+    - name: Display Replication Status
+      ansible.builtin.debug:
+        msg: |
+          ==================================================
+          REPLICATION STATUS FOR DOMAIN CONTROLLER: {{ inventory_hostname }}
+          ==================================================
+
+          {{ replication_output.stdout }}
+
+          --------------------------------------------------
+          Execution Status: {{ replication_output.rc }}
+          (0 usually means success, but check output for errors)
+          --------------------------------------------------
