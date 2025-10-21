@@ -1,42 +1,47 @@
 ---
-- name: Export Semaphore Project JSON and Backup to Windows Network Share
-  # This runs locally on the Ansible Controller/Semaphore Host.
+- name: Rewritten Semaphore Project Backup to Windows Share
+  # This playbook runs on the Ansible Controller/Semaphore Host.
   hosts: localhost
   gather_facts: no
   connection: local
 
   vars:
     # --- SEMAPHORE API CONFIGURATION ---
-    semaphore_api_host: "http://ansible01.reisingers.com:3000" 
+    # IMPORTANT: Ensure this URL is correct. The previous 404 error 
+    # likely means '/api/projects/{{ semaphore_project_id }}/export' is wrong.
+    # Check your Semaphore documentation for the correct export endpoint.
+    semaphore_api_host: "http://ansible01.reisingers.com:3000"
     semaphore_api_token: "qw7gqe5cfbzykkzwt-iwoxshrw1yykpnen1jdnjduza="
     semaphore_project_id: 3
 
     # --- WINDOWS NETWORK SHARE CONFIGURATION ---
-    # The Windows UNC path to the share, formatted as //SERVERNAME/SHARENAME
-    smb_unc_path: "//kevireis-home/i$/Applications/Semaphore/Backup/Reisingers Project" 
+    # The Windows UNC path to the share.
+    smb_unc_path: "//kevireis-home/i$/Applications/Semaphore/Backup/Reisingers Project"
     share_username: ""
-    share_password: ""
-    
+    share_password: "" # Use the correct variable name here for consistency
+
     # --- BACKUP FILE CONFIGURATION ---
     local_temp_dir: "/tmp/semaphore_db_export"
     timestamp: "{{ lookup('pipe', 'date +%Y%m%d-%H%M%S') }}"
     export_filename: "project_{{ semaphore_project_id }}_export_{{ timestamp }}.json"
+    # Full local path for clarity
+    local_export_path: "{{ local_temp_dir }}/{{ export_filename }}"
 
   tasks:
-    - name: Ensure smbclient is installed (REQUIRED FOR WINDOWS SHARE COPY)
-      ansible.builtin.package:
-        name: smbclient
-        state: present
-      # *** FIX: Added become: yes to run apt-get with root privileges ***
-      become: yes 
-      # This task may need adjustment based on your Linux distribution (e.g., yum, dnf, or apt)
+    - name: Setup Prerequisites and Environment
+      block:
+        - name: Ensure smbclient is installed (REQUIRED FOR WINDOWS SHARE COPY)
+          ansible.builtin.package:
+            name: smbclient
+            state: present
+          # Use 'become: yes' to run package manager with root privileges
+          become: yes 
 
-    - name: Ensure local temporary directory exists
-      ansible.builtin.file:
-        path: "{{ local_temp_dir }}"
-        state: directory
-        mode: '0755'
-      delegate_to: localhost
+        - name: Ensure local temporary directory exists
+          ansible.builtin.file:
+            path: "{{ local_temp_dir }}"
+            state: directory
+            mode: '0755'
 
     - name: Call Semaphore API to Export Project JSON
       ansible.builtin.uri:
@@ -45,32 +50,32 @@
         headers:
           Authorization: "Bearer {{ semaphore_api_token }}"
         return_content: true
-        validate_certs: true # Set to 'false' if using self-signed certificates
+        validate_certs: true
+        # This task will fail if it receives a 404 (or other non-2xx code)
       register: project_export_result
 
-    - name: Write the exported JSON content to a local temporary file
-      ansible.builtin.copy:
-        content: "{{ project_export_result.content }}"
-        dest: "{{ local_temp_dir }}/{{ export_filename }}"
-        mode: '0644'
-      delegate_to: localhost
-      register: write_file_result
+    - name: Process Exported Data and Backup to Share
+      block:
+        - name: Write the exported JSON content to a local temporary file (formatted)
+          ansible.builtin.copy:
+            # Use filters to ensure the saved JSON is nicely formatted and readable
+            content: "{{ project_export_result.content | from_json | to_nice_json }}"
+            dest: "{{ local_export_path }}"
+            mode: '0644'
 
-    - name: Copy the exported JSON file to the Windows Network Share using smbclient
-      ansible.builtin.shell: |
-        smbclient "{{ smb_unc_path }}" -U "{{ smb_username }}%{{ smb_password }}" -c "put {{ local_temp_dir }}/{{ export_filename }} {{ export_filename }}"
-      args:
-        # Prevent the password from showing up in Ansible logs
-        no_log: true 
-      delegate_to: localhost
-      register: smb_copy_result
+        - name: Copy the exported JSON file to the Windows Network Share using smbclient
+          ansible.builtin.shell: |
+            smbclient "{{ smb_unc_path }}" -U "{{ share_username }}%{{ share_password }}" -c "put {{ local_export_path }} {{ export_filename }}"
+          args:
+            no_log: true # Prevent password from showing in Ansible logs
 
-    - name: Clean up local temporary JSON file
-      ansible.builtin.file:
-        path: "{{ local_temp_dir }}/{{ export_filename }}"
-        state: absent
-      delegate_to: localhost
+        - name: Display Backup Status
+          ansible.builtin.debug:
+            msg: "✅ Semaphore Project DB (ID: {{ semaphore_project_id }}) successfully exported and copied to {{ smb_unc_path }}/{{ export_filename }}"
 
-    - name: Display Backup Status
-      ansible.builtin.debug:
-        msg: "✅ Semaphore Project DB (ID: {{ semaphore_project_id }}) successfully exported and copied to {{ smb_unc_path }}/{{ export_filename }}"
+      # The 'always' section guarantees cleanup runs, even if the SMB copy fails.
+      always:
+        - name: Clean up local temporary JSON file
+          ansible.builtin.file:
+            path: "{{ local_export_path }}"
+            state: absent
