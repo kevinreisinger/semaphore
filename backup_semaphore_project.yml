@@ -28,7 +28,7 @@
   tasks:
     - name: Setup Prerequisites and Environment
       block:
-        - name: Ensure smbclient is installed (REQUIRED FOR WINDOWS SHARE COPY)
+        - name: "Ensure smbclient is installed (REQUIRED FOR WINDOWS SHARE COPY)" # Wrapped in quotes for safety
           ansible.builtin.package:
             name: smbclient
             state: present
@@ -41,7 +41,7 @@
             state: directory
             mode: '0755'
 
-    - name: Call Semaphore API to Export Project JSON (ATTEMPT 3: Singular 'project' path)
+    - name: "Call Semaphore API to Export Project JSON (ATTEMPT 3: Singular 'project' path)" # FIX: Wrapped in quotes
       ansible.builtin.uri:
         # FIX: Changed 'projects' to 'project'
         url: "{{ semaphore_api_host }}/api/project/{{ semaphore_project_id }}?export=true"
