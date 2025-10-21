@@ -13,7 +13,7 @@
 
     # --- WINDOWS NETWORK SHARE CONFIGURATION ---
     # The Windows UNC path to the share, formatted as //SERVERNAME/SHARENAME
-    smb_unc_path: "//kevireis-home/i$/Applications/Semaphore/Reisingers Project" 
+    smb_unc_path: "//kevireis-home/i$/Applications/Semaphore/Backup/Reisingers Project" 
     share_username: ""
     share_password: ""
     
