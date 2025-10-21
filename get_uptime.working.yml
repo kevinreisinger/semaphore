@@ -1,50 +1,44 @@
 ---
-- name: Get Uptime for Linux/Unix Servers
-  hosts: linux
-  gather_facts: yes
-  
-  tasks:
-    - name: Fetch system facts (including uptime_seconds)
-      # The setup module runs automatically due to gather_facts: yes, 
-      # but we explicitly call it here to ensure data is fresh if needed.
-      ansible.builtin.setup:
-        filter: "ansible_uptime_seconds"
-      # The uptime value is stored in the fact ansible_uptime_seconds
-      
-    - name: Display Linux Uptime
-      ansible.builtin.debug:
-        msg: |
-          Server: {{ inventory_hostname }}
-          OS Family: {{ ansible_os_family }}
-          Uptime Seconds: {{ ansible_uptime_seconds }}
-          # Calculate days and hours for human-readable output
-          {% set uptime_days = (ansible_uptime_seconds // 86400) | int %}
-          {% set uptime_seconds_remaining = ansible_uptime_seconds % 86400 %}
-          {% set uptime_hours = (uptime_seconds_remaining // 3600) | int %}
-          Uptime Human Readable: {{ uptime_days }} days, {{ uptime_hours }} hours
-
-- name: Get Uptime for Windows Servers
-  hosts: windows
-  gather_facts: no # facts are not required, only the command output
+- name: Get Uptime for All Servers (Linux and Windows) and Display Combined Summary
+  # Target all hosts in both defined groups
+  hosts: linux:windows
+  gather_facts: yes # Gather facts for Linux (ansible_uptime_seconds)
 
   tasks:
-    - name: Execute systeminfo to find boot time
-      # The 'systeminfo' command is used to get the system start time, 
-      # which allows for calculating uptime manually.
+    # 1. Linux Uptime Calculation (Runs only on non-Windows hosts)
+    # Calculates the human-readable uptime string and stores it in a unified fact.
+    - name: Calculate and Store Linux Uptime
+      ansible.builtin.set_fact:
+        server_uptime: >
+          {% set uptime_seconds = ansible_uptime_seconds | default(0) %}
+          {% set uptime_days = (uptime_seconds // 86400) | int %}
+          {% set uptime_hours = ((uptime_seconds % 86400) // 3600) | int %}
+          {{ uptime_days }} days, {{ uptime_hours }} hours
+      when: ansible_os_family != "Windows"
+
+    # 2. Windows Uptime Execution (Runs only on Windows hosts)
+    - name: Execute PowerShell to get Windows Uptime
       ansible.windows.win_shell: |
         $LastBootTime = (Get-CimInstance -ClassName Win32_OperatingSystem).LastBootUpTime
         $Uptime = (Get-Date) - $LastBootTime
-        
-        # Format the output as a simple string containing total days and hours
         $UptimeString = "$($Uptime.Days) days, $($Uptime.Hours) hours"
-        
-        # Output the formatted string to standard output, which Ansible captures
         Write-Output $UptimeString
       register: windows_uptime_output
+      when: ansible_os_family == "Windows"
 
-    - name: Display Windows Uptime
+    # 3. Windows Uptime Storage (Runs immediately after execution on Windows hosts)
+    # Stores the PowerShell output in the unified fact.
+    - name: Store Windows Uptime in fact
+      ansible.builtin.set_fact:
+        server_uptime: "{{ windows_uptime_output.stdout_lines[0] | default('N/A') }}"
+      when: ansible_os_family == "Windows" and windows_uptime_output.stdout is defined
+
+    # 4. Final Combined Display
+    # This task runs once on the control node (localhost) and loops through all hosts
+    # in the current execution batch to print the collected 'server_uptime' fact.
+    - name: Display Combined Server Uptime Summary
       ansible.builtin.debug:
-        msg: |
-          Server: {{ inventory_hostname }}
-          OS Family: Windows
-          Uptime: {{ windows_uptime_output.stdout_lines[0] | default("N/A") }}
+        msg: "Server: {{ hostvars[item].inventory_hostname }} | OS: {{ hostvars[item].ansible_os_family | default('Unknown') }} | Uptime: {{ hostvars[item].server_uptime | default('Uptime data unavailable.') }}"
+      loop: "{{ ansible_play_batch }}"
+      run_once: true
+      delegate_to: localhost
