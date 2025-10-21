@@ -1,6 +1,6 @@
 ---
 - name: Check Active Directory Replication Status
-  hosts: domain_controllers
+  hosts: domain_controllers # Assuming you have a 'domain_controllers' group in your inventory
   gather_facts: no
 
   tasks:
@@ -25,13 +25,26 @@
         $CurrentPartition = ""
         $CurrentNeighbor = ""
         
+        # Function to shorten the full partition name (e.g., DC=domain,DC=com -> Domain)
+        function Get-ShortPartitionName {
+            param([string]$LdapName)
+            switch -wildcard ($LdapName) {
+                "DC=*" { return "Domain" }
+                "CN=Configuration,*" { return "Config" }
+                "CN=Schema,*" { return "Schema" }
+                "DC=DomainDnsZones,*" { return "DNS Zones" }
+                "DC=ForestDnsZones,*" { return "Forest DNS" }
+                default { return $LdapName }
+            }
+        }
+
         # Split the output into lines and process
         $RawOutput -split "`n" | ForEach-Object {
             $line = $_.Trim()
             
-            # Identify the Partition (starts with DC=)
+            # Identify the Partition (starts with DC= or CN=)
             if ($line -match "^(DC=|CN=)") {
-                $CurrentPartition = $line
+                $CurrentPartition = Get-ShortPartitionName -LdapName $line
             } 
             # Identify the Neighbor/Source DC (starts with DomainName\DCName via RPC)
             elseif ($line -match "^\s+([^\\]+\\[^\s]+) via RPC$") {
@@ -40,14 +53,14 @@
             # Identify the Last Attempt Status
             elseif ($line -match "Last attempt @.* was successful\.$") {
                 # Successful replication entry
-                $Summary += "✅ Partition: $CurrentPartition | Source DC: $CurrentNeighbor | Status: SUCCESSFUL"
+                $Summary += "✅ Partition: $CurrentPartition | Source DC: $CurrentNeighbor | Status: Success"
                 # Reset neighbor to avoid double-counting the next status line
                 $CurrentNeighbor = "" 
             }
             elseif ($line -match "Last attempt @.* failed with status \((.*?)\)\.$") {
                 # Failed replication entry
                 $ErrorStatus = $Matches[1]
-                $Summary += "❌ Partition: $CurrentPartition | Source DC: $CurrentNeighbor | Status: FAILED ($ErrorStatus)"
+                $Summary += "❌ Partition: $CurrentPartition | Source DC: $CurrentNeighbor | Status: FAILED (Code $ErrorStatus)"
                 $CurrentNeighbor = ""
             }
         }
