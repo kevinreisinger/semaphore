@@ -1,0 +1,38 @@
+---
+- name: Get Uptime for VMware ESXi Hosts
+  # IMPORTANT: This play requires the community.vmware collection to be installed.
+  # Target ESXi hosts group (e.g., 'esxi_hosts' in your inventory)
+  hosts: esx
+  gather_facts: no
+  vars:
+    # --- REQUIRED: Replace these with actual secrets or Ansible Vault variables ---
+    # These variables need access to read host facts from the ESXi host or vCenter.
+    vmware_user: "root"
+    vmware_pass: "risman69"
+
+  tasks:
+    - name: Gather ESXi Host Facts (including system health info)
+      community.vmware.vmware_host_facts:
+        hostname: "{{ inventory_hostname }}"
+        username: "{{ vmware_user }}"
+        password: "{{ vmware_pass }}"
+        validate_certs: false # Set to true if you are using trusted certificates
+        gather_subset:
+          - summary
+      register: host_facts
+
+    - name: Calculate Uptime in Days and Hours
+      ansible.builtin.set_fact:
+        # The uptime is returned in seconds under host_facts.ansible_facts.host_summary.quickStats.uptime
+        esxi_uptime_seconds: "{{ host_facts.ansible_facts.host_summary.quickStats.uptime }}"
+        
+        # Calculate days and remaining hours
+        esxi_uptime_formatted: >-
+          {% set seconds = host_facts.ansible_facts.host_summary.quickStats.uptime | int %}
+          {% set days = (seconds // (60 * 60 * 24)) %}
+          {% set hours = ((seconds % (60 * 60 * 24)) // (60 * 60)) %}
+          {{ days }} days, {{ hours }} hours
+
+    - name: Display ESXi Host Uptime
+      ansible.builtin.debug:
+        msg: "Server: {{ inventory_hostname }} | OS: VMware ESXi | Uptime: {{ esxi_uptime_formatted }}"
