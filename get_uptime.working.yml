@@ -1,5 +1,5 @@
 ---
-- name: Get Uptime for Linux Servers
+- name: Get Uptime for Linux/Unix Servers
   hosts: linux
   gather_facts: yes
   
@@ -17,8 +17,11 @@
           Server: {{ inventory_hostname }}
           OS Family: {{ ansible_os_family }}
           Uptime Seconds: {{ ansible_uptime_seconds }}
-          # Convert seconds to a human-readable format for easier viewing
-          Uptime Human Readable: {{ (ansible_uptime_seconds / 86400) | round(2) }} days
+          # Calculate days and hours for human-readable output
+          {% set uptime_days = (ansible_uptime_seconds // 86400) | int %}
+          {% set uptime_seconds_remaining = ansible_uptime_seconds % 86400 %}
+          {% set uptime_hours = (uptime_seconds_remaining // 3600) | int %}
+          Uptime Human Readable: {{ uptime_days }} days, {{ uptime_hours }} hours
 
 - name: Get Uptime for Windows Servers
   hosts: windows
