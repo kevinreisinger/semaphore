@@ -15,7 +15,7 @@
 
     # 2. Process the raw output to create a clean summary
     - name: Process Replication Output for Clean Summary
-      ansible.windows.win_shell: |
+      ansible.windows.win_shell: >-
         $RawOutput = @"
         {{ replication_output.stdout }}
         "@
