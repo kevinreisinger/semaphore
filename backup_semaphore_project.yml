@@ -1,9 +1,9 @@
 ---
 - name: Export Semaphore Project JSON and Backup to Windows Network Share
   # This runs locally on the Ansible Controller/Semaphore Host.
-  hosts: localhost
+  hosts: 127.0.0.1
   gather_facts: no
-  connection: local
+  connection: 127.0.0.1
 
   vars:
     # --- SEMAPHORE API CONFIGURATION ---
