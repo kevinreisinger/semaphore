@@ -1,11 +1,13 @@
 ---
 - name: Get Uptime for VMware ESXi Hosts
-  # IMPORTANT: Use connection: local so Ansible runs the module on the control node
-  # and the module connects to the ESXi host via the API (not SSH).
+  # IMPORTANT: We set 'connection: local' here, and we reinforce this in 'vars'
+  # to prevent SSH connection attempts which are failing due to protocol mismatch.
   hosts: esx
   gather_facts: no
   connection: local
   vars:
+    # Reinforce the connection type to ensure Ansible does NOT use SSH
+    ansible_connection: local
     # --- REQUIRED: Replace these with actual secrets or Ansible Vault variables ---
     # These variables need access to read host facts from the ESXi host or vCenter.
     vmware_user: "root"
@@ -14,12 +16,13 @@
   tasks:
     - name: Gather ESXi Host Facts (including system health info)
       community.vmware.vmware_host_facts:
+        # NOTE: Removed 'gather_subset' as it is not supported in your version of the VMware collection.
+        # The connection to the host is handled by the VMware module, 
+        # which uses the API (HTTPS) based on the provided credentials.
         hostname: "{{ inventory_hostname }}"
         username: "{{ vmware_user }}"
         password: "{{ vmware_pass }}"
         validate_certs: false # Set to true if you are using trusted certificates
-        gather_subset:
-          - summary
       register: host_facts
 
     - name: Calculate Uptime in Days and Hours
