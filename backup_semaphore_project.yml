@@ -1,0 +1,74 @@
+---
+- name: Export Semaphore Project JSON and Backup to Windows Network Share
+  # This runs locally on the Ansible Controller/Semaphore Host.
+  hosts: localhost
+  gather_facts: no
+  connection: local
+
+  vars:
+    # --- SEMAPHORE API CONFIGURATION ---
+    semaphore_api_host: "http://ansible01.reisingers.com:3000" 
+    semaphore_api_token: "zfgbkvf48x006tu0"
+    semaphore_project_id: 3
+
+    # --- WINDOWS NETWORK SHARE CONFIGURATION ---
+    # The Windows UNC path to the share, formatted as //SERVERNAME/SHARENAME
+    smb_unc_path: "//YOUR_WINDOWS_SERVER/Backups/SemaphoreExports" 
+    smb_username: "backup_user"
+    smb_password: "YourWindowsSharePassword"
+    
+    # --- BACKUP FILE CONFIGURATION ---
+    local_temp_dir: "/tmp/semaphore_db_export"
+    timestamp: "{{ lookup('pipe', 'date +%Y%m%d-%H%M%S') }}"
+    export_filename: "project_{{ semaphore_project_id }}_export_{{ timestamp }}.json"
+
+  tasks:
+    - name: Ensure smbclient is installed (REQUIRED FOR WINDOWS SHARE COPY)
+      ansible.builtin.package:
+        name: smbclient
+        state: present
+      # This task may need adjustment based on your Linux distribution (e.g., yum, dnf, or apt)
+
+    - name: Ensure local temporary directory exists
+      ansible.builtin.file:
+        path: "{{ local_temp_dir }}"
+        state: directory
+        mode: '0755'
+      delegate_to: localhost
+
+    - name: Call Semaphore API to Export Project JSON
+      ansible.builtin.uri:
+        url: "{{ semaphore_api_host }}/api/projects/{{ semaphore_project_id }}/export"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ semaphore_api_token }}"
+        return_content: true
+        validate_certs: true # Set to 'false' if using self-signed certificates
+      register: project_export_result
+
+    - name: Write the exported JSON content to a local temporary file
+      ansible.builtin.copy:
+        content: "{{ project_export_result.content }}"
+        dest: "{{ local_temp_dir }}/{{ export_filename }}"
+        mode: '0644'
+      delegate_to: localhost
+      register: write_file_result
+
+    - name: Copy the exported JSON file to the Windows Network Share using smbclient
+      ansible.builtin.shell: |
+        smbclient "{{ smb_unc_path }}" -U "{{ smb_username }}%{{ smb_password }}" -c "put {{ local_temp_dir }}/{{ export_filename }} {{ export_filename }}"
+      args:
+        # Prevent the password from showing up in Ansible logs
+        no_log: true 
+      delegate_to: localhost
+      register: smb_copy_result
+
+    - name: Clean up local temporary JSON file
+      ansible.builtin.file:
+        path: "{{ local_temp_dir }}/{{ export_filename }}"
+        state: absent
+      delegate_to: localhost
+
+    - name: Display Backup Status
+      ansible.builtin.debug:
+        msg: "✅ Semaphore Project DB (ID: {{ semaphore_project_id }}) successfully exported and copied to {{ smb_unc_path }}/{{ export_filename }}"
