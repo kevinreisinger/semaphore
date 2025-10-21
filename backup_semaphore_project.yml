@@ -8,7 +8,7 @@
   vars:
     # --- SEMAPHORE API CONFIGURATION ---
     semaphore_api_host: "http://ansible01.reisingers.com:3000" 
-    semaphore_api_token: "zfgbkvf48x006tu0"
+    semaphore_api_token: "qw7gqe5cfbzykkzwt-iwoxshrw1yykpnen1jdnjduza="
     semaphore_project_id: 3
 
     # --- WINDOWS NETWORK SHARE CONFIGURATION ---
