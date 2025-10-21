@@ -1,6 +1,6 @@
 ---
 - name: Get Uptime for Linux/Unix Servers
-  hosts: linux_servers # Change this to your actual Linux group name (e.g., 'linux')
+  hosts: linux
   gather_facts: yes
   
   tasks:
@@ -24,7 +24,7 @@
           Uptime Human Readable: {{ uptime_days }} days, {{ uptime_hours }} hours
 
 - name: Get Uptime for Windows Servers
-  hosts: windows # Change this to your actual Windows group name (e.g., 'windows')
+  hosts: windows
   gather_facts: no # facts are not required, only the command output
 
   tasks:
