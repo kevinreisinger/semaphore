@@ -1,0 +1,86 @@
+---
+- name: Provision a New Windows VM on Proxmox VE
+  # Runs on the Ansible control node (connection: local) and communicates with the Proxmox API.
+  hosts: proxmox_hosts
+  gather_facts: no
+  connection: local
+
+  vars:
+    # --- REQUIRED PROXMOX CREDENTIALS (API Access) ---
+    pve_host: "{{ inventory_hostname }}"
+    pve_user: "ansible_user@pve"
+    pve_pass: "YourVaultPassword"
+    pve_node: "pve-node-01" # The specific Proxmox node to build the VM on
+
+    # --- NEW WINDOWS VM CONFIGURATION ---
+    vm_id: 300 # Unique ID for the new VM (ensure this doesn't conflict with existing IDs)
+    vm_name: "new-win-server-01"
+    template_id: 150 # ID of the existing Windows template with Cloudbase-Init (MANDATORY)
+    ip_address: "192.168.1.50/24"
+    gateway: "192.168.1.1"
+
+    # --- WINDOWS GUEST LOGIN (Used by Cloudbase-Init for first boot) ---
+    win_user: "Administrator" # Common default Windows user
+    win_password: "SecurePassword456" # Temporary password set during Cloudbase-Init
+
+  tasks:
+    - name: Ensure Proxmox is available
+      ansible.builtin.wait_for:
+        host: "{{ pve_host }}"
+        port: 8006
+        timeout: 30
+      delegate_to: localhost
+
+    - name: Clone the Windows template and configure VM resources
+      community.general.proxmox_vm:
+        api_host: "{{ pve_host }}"
+        api_user: "{{ pve_user }}"
+        api_password: "{{ pve_pass }}"
+        node: "{{ pve_node }}"
+        vmid: "{{ vm_id }}"
+        name: "{{ vm_name }}"
+        state: present
+        target: "{{ template_id }}" # Source Windows template ID for cloning
+        clone: "{{ template_id }}"
+        # OS Type and Hardware
+        ostype: "win"
+        cores: 2
+        memory: 8192 # Recommended 8GB RAM for Windows Server
+        scsihw: "virtio-scsi-pci"
+        # Network Configuration
+        net:
+          net0: "model=virtio,bridge=vmbr0,ip={{ ip_address }},gw={{ gateway }}"
+        # Cloudbase-Init Configuration (for Windows)
+        ciuser: "{{ win_user }}"
+        cipassword: "{{ win_password }}"
+        # Removed Linux-specific settings: sshkeys, cicustom
+      register: vm_creation_output
+
+    - name: Start the newly provisioned Windows VM
+      community.general.proxmox_vm:
+        api_host: "{{ pve_host }}"
+        api_user: "{{ pve_user }}"
+        api_password: "{{ pve_pass }}"
+        node: "{{ pve_node }}"
+        vmid: "{{ vm_id }}"
+        state: started
+      
+    - name: Wait for the Windows VM to be available via WinRM
+      # Waits for the new VM to finish booting and for the WinRM service to respond.
+      ansible.builtin.wait_for_connection:
+        timeout: 600 # Wait up to 10 minutes
+        delay: 30
+      delegate_to: localhost
+      vars:
+        # Configuration needed for the WinRM connection check
+        ansible_host: "{{ ip_address | split('/') | first }}"
+        ansible_port: 5986
+        ansible_connection: winrm
+        ansible_winrm_server_cert_validation: ignore # Necessary if using self-signed certs
+        ansible_winrm_transport: basic # Often needed for initial connection
+        ansible_user: "{{ win_user }}"
+        ansible_password: "{{ win_password }}"
+        
+    - name: Display VM Creation Result
+      ansible.builtin.debug:
+        msg: "Windows VM {{ vm_name }} (ID: {{ vm_id }}) successfully provisioned and is now reachable via WinRM at {{ ip_address | split('/') | first }}"
