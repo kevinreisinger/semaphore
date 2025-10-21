@@ -62,10 +62,10 @@
             mode: '0644'
 
         - name: Copy the exported JSON file to the Windows Network Share using smbclient
+          # FIX: Removed 'args' and moved 'no_log' to the task level.
           ansible.builtin.shell: |
             smbclient "{{ smb_unc_path }}" -U "{{ share_username }}%{{ share_password }}" -c "put {{ local_export_path }} {{ export_filename }}"
-          args:
-            no_log: true # Prevent password from showing in Ansible logs
+          no_log: true
 
         - name: Display Backup Status
           ansible.builtin.debug:
