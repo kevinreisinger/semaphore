@@ -1,6 +1,6 @@
 ---
 - name: Check Active Directory Replication Status
-  hosts: domain_controllers # Assuming you have a 'domain_controllers' group in your inventory
+  hosts: domain_controllers
   gather_facts: no
 
   tasks:
@@ -15,7 +15,7 @@
 
     # 2. Process the raw output to create a clean summary
     - name: Process Replication Output for Clean Summary
-      ansible.windows.win_shell: >-
+      ansible.windows.win_shell: |
         $RawOutput = @"
         {{ replication_output.stdout }}
         "@
@@ -25,49 +25,30 @@
         $CurrentPartition = ""
         $CurrentNeighbor = ""
         
-        # Function to shorten the full partition name (e.g., DC=domain,DC=com -> Domain)
-        function Get-ShortPartitionName {
-            param([string]$LdapName)
-            switch -wildcard ($LdapName) {
-                "DC=*" { return "Domain" }
-                "CN=Configuration,*" { return "Config" }
-                "CN=Schema,*" { return "Schema" }
-                "DC=DomainDnsZones,*" { return "DNS Zones" }
-                "DC=ForestDnsZones,*" { return "Forest DNS" }
-                default { return $LdapName }
-            }
-        }
-
         # Split the output into lines and process
         $RawOutput -split "`n" | ForEach-Object {
             $line = $_.Trim()
             
-            # Identify the Partition (starts with DC= or CN=)
+            # Identify the Partition (starts with DC=)
             if ($line -match "^(DC=|CN=)") {
-                $CurrentPartition = Get-ShortPartitionName -LdapName $line
+                $CurrentPartition = $line
             } 
-            # FIX: Use a less strict regex to capture the neighbor name and ensure it's not overwritten prematurely.
-            # This line captures the DC name (e.g., Harrisburg\DC08)
-            elseif ($line -match '^\s+([^\\]+\\[^\s]+)\s+via RPC$') {
+            # Identify the Neighbor/Source DC (starts with DomainName\DCName via RPC)
+            elseif ($line -match "^\s+([^\\]+\\[^\s]+) via RPC$") {
                 $CurrentNeighbor = $Matches[1]
             }
-            # Identify the Last Attempt Status (Success)
+            # Identify the Last Attempt Status
             elseif ($line -match "Last attempt @.* was successful\.$") {
                 # Successful replication entry
-                $Summary += "✅ Partition: $CurrentPartition | Source DC: $CurrentNeighbor | Status: Success"
-                # Keep $CurrentNeighbor set until the next neighbor line is found
+                $Summary += "✅ Partition: $CurrentPartition | Source DC: $CurrentNeighbor | Status: SUCCESSFUL"
+                # Reset neighbor to avoid double-counting the next status line
+                $CurrentNeighbor = "" 
             }
-            # Identify the Last Attempt Status (Failure)
             elseif ($line -match "Last attempt @.* failed with status \((.*?)\)\.$") {
                 # Failed replication entry
                 $ErrorStatus = $Matches[1]
-                $Summary += "❌ Partition: $CurrentPartition | Source DC: $CurrentNeighbor | Status: FAILED (Code $ErrorStatus)"
-                # Keep $CurrentNeighbor set until the next neighbor line is found
-            }
-            # Add a check to reset the CurrentNeighbor after a block of partition data is complete (e.g., after finding GUID line)
-            elseif ($line -match "^DSA object GUID:") {
-                 # Clear neighbor name when we encounter a new GUID line (separates different replication links/objects)
-                 $CurrentNeighbor = ""
+                $Summary += "❌ Partition: $CurrentPartition | Source DC: $CurrentNeighbor | Status: FAILED ($ErrorStatus)"
+                $CurrentNeighbor = ""
             }
         }
         
