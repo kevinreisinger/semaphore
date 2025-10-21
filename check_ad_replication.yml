@@ -1,73 +1,36 @@
 ---
-- name: Check Active Directory Replication Status
+- name: Check Active Directory Replication Status (using replsummary)
+  # Target domain_controllers group
   hosts: domain_controllers
   gather_facts: no
 
   tasks:
-    # 1. Execute repadmin /showrepl command
-    - name: Execute repadmin /showrepl command
+    # 1. Execute repadmin /replsummary command once
+    # This command reports on the entire forest, so it only needs to run on one DC.
+    - name: Execute repadmin /replsummary command (Run Once)
       ansible.windows.win_shell: |
-        # Use repadmin to show replication status
-        & repadmin /replsummary $env:COMPUTERNAME
-      register: replication_output
+        # Use repadmin /replsummary to generate a high-level table summarizing replication status.
+        # The /latency option is excellent for quickly identifying slow replication links.
+        & repadmin /replsummary /latency
+      register: replsummary_output
+      run_once: true
+      delegate_to: "{{ inventory_hostname }}"
       # Ignore non-zero return codes (rc=1) which are common for repadmin even on success.
       failed_when: false
 
-    # 2. Process the raw output to create a clean summary
-    - name: Process Replication Output for Clean Summary
-      ansible.windows.win_shell: |
-        $RawOutput = @"
-        {{ replication_output.stdout }}
-        "@
-
-        # Initialize the output array and a variable to hold the current context
-        $Summary = @()
-        $CurrentPartition = ""
-        $CurrentNeighbor = ""
-        
-        # Split the output into lines and process
-        $RawOutput -split "`n" | ForEach-Object {
-            $line = $_.Trim()
-            
-            # Identify the Partition (starts with DC=)
-            if ($line -match "^(DC=|CN=)") {
-                $CurrentPartition = $line
-            } 
-            # Identify the Neighbor/Source DC (starts with DomainName\DCName via RPC)
-            elseif ($line -match "^\s+([^\\]+\\[^\s]+) via RPC$") {
-                $CurrentNeighbor = $Matches[1]
-            }
-            # Identify the Last Attempt Status
-            elseif ($line -match "Last attempt @.* was successful\.$") {
-                # Successful replication entry
-                $Summary += "✅ Partition: $CurrentPartition | Source DC: $CurrentNeighbor | Status: SUCCESSFUL"
-                # Reset neighbor to avoid double-counting the next status line
-                $CurrentNeighbor = "" 
-            }
-            elseif ($line -match "Last attempt @.* failed with status \((.*?)\)\.$") {
-                # Failed replication entry
-                $ErrorStatus = $Matches[1]
-                $Summary += "❌ Partition: $CurrentPartition | Source DC: $CurrentNeighbor | Status: FAILED ($ErrorStatus)"
-                $CurrentNeighbor = ""
-            }
-        }
-        
-        $Summary -join "`n"
-      register: cleaned_output
-      # Only process if the raw output was captured
-      when: replication_output.stdout is defined and replication_output.stdout | length > 0
-
-
-    # 3. Display the Cleaned Status
-    - name: Display Cleaned Replication Status Summary
+    # 2. Display the consolidated replication summary
+    - name: Display Consolidated Replication Summary
       ansible.builtin.debug:
         msg: |
-          ==================================================
-          CLEANED REPLICATION SUMMARY FOR: {{ inventory_hostname }}
-          ==================================================
+          ======================================================================
+          CONSOLIDATED ACTIVE DIRECTORY REPLICATION SUMMARY
+          (Generated from {{ inventory_hostname }} using repadmin /replsummary /latency)
+          ======================================================================
+          
+          {{ replsummary_output.stdout | default('Failed to run repadmin /replsummary or no output was returned.') }}
 
-          {{ cleaned_output.stdout | default('No replication status could be parsed.') }}
-
-          --------------------------------------------------
-          Raw Execution Status: {{ replication_output.rc }}
-          --------------------------------------------------
+          ----------------------------------------------------------------------
+          STATUS: Raw Execution Code: {{ replsummary_output.rc }}
+          ----------------------------------------------------------------------
+      # Only show the output if the command was executed (i.e., on the first host)
+      when: replsummary_output is defined and replsummary_output.stdout is defined
