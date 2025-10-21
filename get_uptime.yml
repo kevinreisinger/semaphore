@@ -1,5 +1,5 @@
 ---
-- name: Get Uptime for Linux/Unix Servers
+- name: Get Uptime for Linux Servers
   hosts: linux
   gather_facts: yes
   
