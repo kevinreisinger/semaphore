@@ -1,0 +1,66 @@
+---
+- name: Provision a New VM on Proxmox VE
+  # This playbook runs on the Ansible control node (connection: local)
+  # and communicates with the Proxmox API using the provided credentials.
+  hosts: proxmox_hosts
+  gather_facts: no
+  connection: local
+
+  vars:
+    # --- REQUIRED PROXMOX CREDENTIALS ---
+    # These variables must be defined in your inventory or vault
+    pve_host: "{{ inventory_hostname }}"
+    pve_user: "ansible_user@pve"
+    pve_pass: "YourVaultPassword"
+    pve_node: "pve-node-01" # The specific Proxmox node to build the VM on
+
+    # --- NEW VM CONFIGURATION ---
+    vm_id: 200 # Unique ID for the new VM
+    vm_name: "new-web-server-01"
+    template_id: 100 # ID of the existing Cloud-Init template
+    ip_address: "192.168.1.10/24"
+    gateway: "192.168.1.1"
+
+  tasks:
+    - name: Ensure Proxmox is available
+      ansible.builtin.wait_for:
+        host: "{{ pve_host }}"
+        port: 8006
+        timeout: 30
+      delegate_to: localhost
+
+    - name: Clone the Cloud-Init template and configure network/CPU/RAM
+      community.general.proxmox_vm:
+        api_host: "{{ pve_host }}"
+        api_user: "{{ pve_user }}"
+        api_password: "{{ pve_pass }}"
+        node: "{{ pve_node }}"
+        vmid: "{{ vm_id }}"
+        name: "{{ vm_name }}"
+        state: present
+        target: "{{ template_id }}" # Source template ID for cloning
+        clone: "{{ template_id }}"
+        # Hardware Configuration
+        cores: 2
+        memory: 4096 # 4GB RAM
+        scsihw: "virtio-scsi-pci"
+        # Network Configuration
+        net:
+          net0: "model=virtio,bridge=vmbr0,ip={{ ip_address }},gw={{ gateway }}"
+        # Cloud-Init Configuration
+        cicustom: "user=local:snippets/ansible-user.yaml" # Points to a user config file on Proxmox
+        ciuser: "ansible"
+        cipassword: "SecurePassword123" # Use a secure method or SSH keys!
+        sshkeys: |
+          # Replace with your actual public key
+          ssh-rsa AAAAB3NzaC1yc2EA...yourkey... user@ansible-controller
+      register: vm_creation_output
+
+    - name: Start the newly provisioned VM
+      community.general.proxmox_vm:
+        api_host: "{{ pve_host }}"
+        api_user: "{{ pve_user }}"
+        api_password: "{{ pve_pass }}"
+        node: "{{ pve_node }}"
+        vmid: "{{ vm_id }}"
+        state: started
