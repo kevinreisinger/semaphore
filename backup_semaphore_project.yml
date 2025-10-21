@@ -7,9 +7,8 @@
 
   vars:
     # --- SEMAPHORE API CONFIGURATION ---
-    # IMPORTANT: Ensure this URL is correct. The previous 404 error 
-    # likely means '/api/projects/{{ semaphore_project_id }}/export' is wrong.
-    # Check your Semaphore documentation for the correct export endpoint.
+    # The URL has been updated to use the standard project endpoint 
+    # with the 'export=true' query parameter, which typically resolves 404 errors.
     semaphore_api_host: "http://ansible01.reisingers.com:3000"
     semaphore_api_token: "qw7gqe5cfbzykkzwt-iwoxshrw1yykpnen1jdnjduza="
     semaphore_project_id: 3
@@ -43,15 +42,15 @@
             state: directory
             mode: '0755'
 
-    - name: Call Semaphore API to Export Project JSON
+    - name: Call Semaphore API to Export Project JSON (FIXED URL)
       ansible.builtin.uri:
-        url: "{{ semaphore_api_host }}/api/projects/{{ semaphore_project_id }}/export"
+        # FIX: Changed path from /export to ?export=true
+        url: "{{ semaphore_api_host }}/api/projects/{{ semaphore_project_id }}?export=true"
         method: GET
         headers:
           Authorization: "Bearer {{ semaphore_api_token }}"
         return_content: true
         validate_certs: true
-        # This task will fail if it receives a 404 (or other non-2xx code)
       register: project_export_result
 
     - name: Process Exported Data and Backup to Share
