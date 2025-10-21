@@ -14,8 +14,8 @@
     # --- WINDOWS NETWORK SHARE CONFIGURATION ---
     # The Windows UNC path to the share, formatted as //SERVERNAME/SHARENAME
     smb_unc_path: "//YOUR_WINDOWS_SERVER/Backups/SemaphoreExports" 
-    smb_username: "backup_user"
-    smb_password: "YourWindowsSharePassword"
+    share_username: ""
+    share_password: ""
     
     # --- BACKUP FILE CONFIGURATION ---
     local_temp_dir: "/tmp/semaphore_db_export"
