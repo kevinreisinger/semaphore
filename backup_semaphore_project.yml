@@ -7,8 +7,7 @@
 
   vars:
     # --- SEMAPHORE API CONFIGURATION ---
-    # The URL has been updated to use the standard project endpoint 
-    # with the 'export=true' query parameter, which typically resolves 404 errors.
+    # Attempt 3: Using the singular 'project' path, which is common in some APIs.
     semaphore_api_host: "http://ansible01.reisingers.com:3000"
     semaphore_api_token: "qw7gqe5cfbzykkzwt-iwoxshrw1yykpnen1jdnjduza="
     semaphore_project_id: 3
@@ -42,10 +41,10 @@
             state: directory
             mode: '0755'
 
-    - name: Call Semaphore API to Export Project JSON (FIXED URL)
+    - name: Call Semaphore API to Export Project JSON (ATTEMPT 3: Singular 'project' path)
       ansible.builtin.uri:
-        # FIX: Changed path from /export to ?export=true
-        url: "{{ semaphore_api_host }}/api/projects/{{ semaphore_project_id }}?export=true"
+        # FIX: Changed 'projects' to 'project'
+        url: "{{ semaphore_api_host }}/api/project/{{ semaphore_project_id }}?export=true"
         method: GET
         headers:
           Authorization: "Bearer {{ semaphore_api_token }}"
