@@ -27,6 +27,8 @@
       ansible.builtin.package:
         name: smbclient
         state: present
+      # *** FIX: Added become: yes to run apt-get with root privileges ***
+      become: yes 
       # This task may need adjustment based on your Linux distribution (e.g., yum, dnf, or apt)
 
     - name: Ensure local temporary directory exists
