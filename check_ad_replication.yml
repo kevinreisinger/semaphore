@@ -46,22 +46,28 @@
             if ($line -match "^(DC=|CN=)") {
                 $CurrentPartition = Get-ShortPartitionName -LdapName $line
             } 
-            # Identify the Neighbor/Source DC (starts with DomainName\DCName via RPC)
-            elseif ($line -match "^\s+([^\\]+\\[^\s]+) via RPC$") {
+            # FIX: Use a less strict regex to capture the neighbor name and ensure it's not overwritten prematurely.
+            # This line captures the DC name (e.g., Harrisburg\DC08)
+            elseif ($line -match '^\s+([^\\]+\\[^\s]+)\s+via RPC$') {
                 $CurrentNeighbor = $Matches[1]
             }
-            # Identify the Last Attempt Status
+            # Identify the Last Attempt Status (Success)
             elseif ($line -match "Last attempt @.* was successful\.$") {
                 # Successful replication entry
                 $Summary += "✅ Partition: $CurrentPartition | Source DC: $CurrentNeighbor | Status: Success"
-                # Reset neighbor to avoid double-counting the next status line
-                $CurrentNeighbor = "" 
+                # Keep $CurrentNeighbor set until the next neighbor line is found
             }
+            # Identify the Last Attempt Status (Failure)
             elseif ($line -match "Last attempt @.* failed with status \((.*?)\)\.$") {
                 # Failed replication entry
                 $ErrorStatus = $Matches[1]
                 $Summary += "❌ Partition: $CurrentPartition | Source DC: $CurrentNeighbor | Status: FAILED (Code $ErrorStatus)"
-                $CurrentNeighbor = ""
+                # Keep $CurrentNeighbor set until the next neighbor line is found
+            }
+            # Add a check to reset the CurrentNeighbor after a block of partition data is complete (e.g., after finding GUID line)
+            elseif ($line -match "^DSA object GUID:") {
+                 # Clear neighbor name when we encounter a new GUID line (separates different replication links/objects)
+                 $CurrentNeighbor = ""
             }
         }
         
