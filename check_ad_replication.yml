@@ -52,7 +52,7 @@
             }
         }
         
-        $Summary -join "`n"
+        #$Summary -join "`n"
       register: cleaned_output
       # Only process if the raw output was captured
       when: replication_output.stdout is defined and replication_output.stdout | length > 0
