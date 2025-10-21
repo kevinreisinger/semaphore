@@ -11,7 +11,7 @@
       ansible.windows.win_shell: |
         # Use repadmin /replsummary to generate a high-level table summarizing replication status.
         # The /latency option is excellent for quickly identifying slow replication links.
-        & repadmin /replsummary /latency
+        repadmin /replsummary /latency
       register: replsummary_output
       run_once: true
       delegate_to: "{{ inventory_hostname }}"
