@@ -104,7 +104,7 @@
             smbclient "{{ smb_share_name }}" -U "{{ share_username }}%{{ share_password }}" -c "cd \"{{ smb_remote_path }}\"; ls -N" | grep "^project_{{ semaphore_project_id }}_export_"
           register: remote_files
           changed_when: false
-          no_log: true 
+          # no_log: true <-- REMOVED TEMPORARILY FOR DEBUGGING
 
         - name: Delete files older than {{ backup_retention_days }} days from share
           ansible.builtin.shell: |
