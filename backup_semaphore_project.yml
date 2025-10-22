@@ -19,7 +19,6 @@
 
     # --- BACKUP FILE CONFIGURATION ---
     local_temp_dir: "/tmp/semaphore_db_export"
-    # *** CRITICAL FIX: Removing dynamic timestamp to enforce path stability ***
     temp_export_filename: "project_{{ semaphore_project_id }}_export_temp.json"
     local_temp_path: "{{ local_temp_dir }}/{{ temp_export_filename }}"
     
@@ -45,9 +44,10 @@
             state: directory
             mode: '0755'
 
-    - name: "Call Semaphore API to Export Project JSON (SUCCESSFUL PATH)"
+    - name: "Call Semaphore API to Export Project JSON (ATTEMPT 4: /export_data)"
       ansible.builtin.uri:
-        url: "{{ semaphore_api_host }}/api/project/{{ semaphore_project_id }}?export=true"
+        # FIX: Changing path to the common dedicated export path
+        url: "{{ semaphore_api_host }}/api/projects/{{ semaphore_project_id }}/export_data"
         method: GET
         headers:
           Authorization: "Bearer {{ semaphore_api_token }}"
@@ -64,11 +64,9 @@
             mode: '0644'
 
         - name: Copy the exported JSON file to the Windows Network Share using smbclient
-          # FIX: Moving no_log: true outside of args to be a task parameter.
           ansible.builtin.shell: |
             smbclient "{{ smb_share_name }}" -U "{{ share_username }}%{{ share_password }}" -c "put \"{{ local_temp_path }}\" \"{{ smb_remote_path }}/{{ final_remote_filename }}\""
-          no_log: true # <--- MOVED HERE (Correct location)
-          # args: # <-- REMOVED no_log from here
+          no_log: true 
 
         - name: Display Backup Status
           ansible.builtin.debug:
