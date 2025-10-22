@@ -15,10 +15,12 @@
     - name: Execute PowerShell script for network copy
       # win_shell is used to execute commands via the PowerShell shell on the Windows target.
       ansible.windows.win_shell: |
-        # FINAL FIX: Use the call operator (&) with the path wrapped in single quotes ('') 
-        # to prevent PowerShell from splitting the path at spaces.
-        & '{{ remote_script_path }}'
-        # If your script accepts parameters, pass them here: & '{{ remote_script_path }}' -Param Value
+        # FINAL FIX: Execute powershell.exe with an explicit ExecutionPolicy of Bypass 
+        # to circumvent security restrictions (PSSecurityException)
+        powershell.exe -ExecutionPolicy Bypass -Command "& '{{ remote_script_path }}'"
+        
+        # If your script accepts parameters, the syntax would be: 
+        # powershell.exe -ExecutionPolicy Bypass -Command "& '{{ remote_script_path }}' -Param Value"
       args:
         # Explicitly use powershell.exe for execution
         executable: powershell.exe
