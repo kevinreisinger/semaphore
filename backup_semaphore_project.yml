@@ -63,12 +63,12 @@
             mode: '0644'
 
         - name: Copy the exported JSON file to the Windows Network Share using smbclient
-          # FIX: Use 'chdir' to set the working directory and use simple filename for 'put'.
+          # SECURITY NOTE: 'no_log: true' is currently REMOVED for debugging. We will re-enable it after success.
           ansible.builtin.shell: |
             smbclient "{{ smb_share_name }}" -U "{{ share_username }}%{{ share_password }}" -c "cd \"{{ smb_remote_path }}\"; put \"{{ export_filename }}\" \"{{ export_filename }}\""
           args:
             chdir: "{{ local_temp_dir }}" # Execute the command from this directory
-          no_log: true # Re-enabled for security
+          # no_log: true 
 
         - name: Display Backup Status
           ansible.builtin.debug:
