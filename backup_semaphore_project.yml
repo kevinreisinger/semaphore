@@ -2,6 +2,9 @@
 - name: Rewritten Semaphore Project Backup to Windows Share
   # This playbook runs on the Ansible Controller/Semaphore Host.
   hosts: localhost
+  # Removing gather_facts: no to avoid the undefined variable error later, 
+  # or we can use the shell command to get the epoch time manually.
+  # Using shell command is faster than gathering all facts.
   gather_facts: no
   connection: local
 
@@ -84,10 +87,16 @@
 
     - name: Cleanup Old Remote Backups
       block:
+        # --- FIX: Get epoch time directly since gather_facts: no is set ---
+        - name: Get current epoch time for cutoff calculation
+          ansible.builtin.command: date +%s
+          register: current_epoch
+          changed_when: false
+
         - name: Calculate timestamp cutoff (YYYYMMDD format)
           ansible.builtin.set_fact:
-            # Subtract 30 days in seconds (30 * 86400) from the current epoch time.
-            cutoff_date_str: "{{ (ansible_date_time.epoch | int - (backup_retention_days | int) * 86400) | int | to_datetime | strftime('%Y%m%d') }}"
+            # Use epoch from the command output, subtract retention time, convert to date string.
+            cutoff_date_str: "{{ (current_epoch.stdout | int - (backup_retention_days | int) * 86400) | int | to_datetime | strftime('%Y%m%d') }}"
 
         - name: Get list of existing remote backups
           ansible.builtin.shell: |
