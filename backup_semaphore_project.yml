@@ -63,11 +63,12 @@
             mode: '0644'
 
         - name: Copy the exported JSON file to the Windows Network Share using smbclient
-          # SECURITY NOTE: 'no_log: true' is currently REMOVED for debugging. We will re-enable it after success.
+          # FIX: Reverting to ABSOLUTE path for smbclient, ensuring absolute path is quoted.
           ansible.builtin.shell: |
-            smbclient "{{ smb_share_name }}" -U "{{ share_username }}%{{ share_password }}" -c "cd \"{{ smb_remote_path }}\"; put \"{{ export_filename }}\" \"{{ export_filename }}\""
-          args:
-            chdir: "{{ local_temp_dir }}" # Execute the command from this directory
+            smbclient "{{ smb_share_name }}" -U "{{ share_username }}%{{ share_password }}" -c "cd \"{{ smb_remote_path }}\"; put \"{{ local_export_path }}\" \"{{ export_filename }}\""
+          # We are keeping 'no_log: true' REMOVED to catch any FINAL error (Access Denied/etc.)
+          # args:
+          #   chdir: "{{ local_temp_dir }}" # Removed chdir
           # no_log: true 
 
         - name: Display Backup Status
