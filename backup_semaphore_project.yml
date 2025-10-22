@@ -64,11 +64,11 @@
             mode: '0644'
 
         - name: Copy the exported JSON file to the Windows Network Share using smbclient
-          # FIX: Simplified command to use a direct PUT to the full UNC path, ensuring local path is quoted.
+          # FIX: Moving no_log: true outside of args to be a task parameter.
           ansible.builtin.shell: |
             smbclient "{{ smb_share_name }}" -U "{{ share_username }}%{{ share_password }}" -c "put \"{{ local_temp_path }}\" \"{{ smb_remote_path }}/{{ final_remote_filename }}\""
-          args:
-             no_log: true # Re-enabled for security, as file path error should be fixed.
+          no_log: true # <--- MOVED HERE (Correct location)
+          # args: # <-- REMOVED no_log from here
 
         - name: Display Backup Status
           ansible.builtin.debug:
