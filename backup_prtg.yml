@@ -30,28 +30,28 @@
           $maxBackups = {{ max_backups }}
           $sharePath = "{{ share_path }}"
           $shareUsername = "{{ share_username }}"
-          $sharePassword = ConvertTo-SecureString -String '{{ share_password }}' -AsPlainText -Force
+          $sharePassword = '{{ share_password }}' # Plain text password for net use command
 
           $timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm"
           $backupFile = Join-Path $backupRoot "PRTG_Backup_$timestamp.zip"
           
-          # --- 1. Map Network Drive with Specified Credentials ---
+          # --- 1. Map Network Drive with Specified Credentials using net use (Most reliable) ---
           Write-Host "Attempting to map network drive $mapped_drive_letter to $sharePath with specified credentials..."
-          try {
-              # Remove any existing mapping for Z:
-              net use {{ mapped_drive_letter }}: /delete /y | Out-Null
-              
-              # Map the new drive using the provided credentials
-              $credential = New-Object System.Management.Automation.PSCredential($shareUsername, $sharePassword)
-              New-PSDrive -Name {{ mapped_drive_letter }} -PSProvider FileSystem -Root $sharePath -Credential $credential | Out-Null
-              
-              Write-Host "Network drive mapped successfully."
-          } catch {
-              Write-Error "CRITICAL ERROR: Failed to map network drive. Check credentials and path. $($_.Exception.Message)"
+          
+          # Remove any existing mapping for Z: silently
+          net use {{ mapped_drive_letter }}: /delete /y | Out-Null
+          
+          # Map the new drive using net use, forcing the share credentials
+          $mapResult = net use {{ mapped_drive_letter }}: "$sharePath" "$sharePassword" /user:"$shareUsername" /persistent:no
+          
+          if ($LASTEXITCODE -ne 0) {
+              # If net use fails, Ansible must catch this
+              Write-Error "CRITICAL ERROR (net use failed): Failed to map network drive. Code $LASTEXITCODE. Output: $mapResult"
               exit 1
           }
-
-          # --- 2. Report User Context (Will show the WinRM user, but mapping uses the shared user) ---
+          Write-Host "Network drive mapped successfully."
+          
+          # --- 2. Report User Context ---
           Write-Host "Running under WinRM user: $env:USERNAME"
           Write-Host "Destination path (Mapped): $backupRoot"
           
@@ -68,7 +68,7 @@
                   Write-Host "Backup directory access confirmed."
               }
           } catch {
-              # This confirms a failure to the MAPPED path
+              # If the folder check fails, exit loudly
               Write-Error "CRITICAL ERROR: Failed to access or create backup path '$backupRoot'. Check mapped drive availability. $($_.Exception.Message)"
               exit 1
           }
@@ -85,6 +85,7 @@
               Compress-Archive -Path "$prtgDataPath\\*" -DestinationPath $backupFile -Force
               Write-Host "Compression attempt successful."
           } catch {
+              # If Compress-Archive fails (file lock or path issue), report it.
               Write-Error "CRITICAL ERROR: Failed to compress and write ZIP file. Compression failed. $($_.Exception.Message)"
               exit 1
           }
@@ -96,6 +97,7 @@
           
           # --- 7. Cleanup ---
           Write-Host "Cleaning up old backups..."
+          # ... (rest of cleanup logic)
           $backups = Get-ChildItem -Path $backupRoot -Filter "PRTG_Backup_*.zip" |
                       Sort-Object LastWriteTime -Descending
           
@@ -109,6 +111,7 @@
           
           # --- 8. Unmap Drive ---
           Write-Host "Unmapping network drive Z:..."
+          # Use net use /delete again, capturing output to prevent errors if the mapping is already gone.
           net use Z: /delete /y | Out-Null
           
           Write-Host "Backup completed successfully!"
