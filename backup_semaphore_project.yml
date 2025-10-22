@@ -7,15 +7,11 @@
 
   vars:
     # --- SEMAPHORE API CONFIGURATION ---
-    # SUCCESS: The path /api/project/{{ semaphore_project_id }}?export=true worked!
     semaphore_api_host: "http://ansible01.reisingers.com:3000"
     semaphore_api_token: "qw7gqe5cfbzykkzwt-iwoxshrw1yykpnen1jdnjduza="
     semaphore_project_id: 3
 
     # --- WINDOWS NETWORK SHARE CONFIGURATION ---
-    # The share name MUST be in the format //SERVERNAME/SHARENAME
-    # For administrative shares like i$, the share name is 'i$'. The directory path comes after.
-    # UNC path was: //kevireis-home/i$/Applications/Semaphore/Backup/Reisingers Project
     smb_share_name: "//kevireis-home/i$"
     smb_remote_path: "/Applications/Semaphore/Backup/Reisingers Project" # Subdirectory inside the share
     share_username: ""
@@ -23,10 +19,16 @@
 
     # --- BACKUP FILE CONFIGURATION ---
     local_temp_dir: "/tmp/semaphore_db_export"
+    # *** CRITICAL FIX: Removing dynamic timestamp to enforce path stability ***
+    temp_export_filename: "project_{{ semaphore_project_id }}_export_temp.json"
+    local_temp_path: "{{ local_temp_dir }}/{{ temp_export_filename }}"
+    
+    # Final name includes timestamp, used only for the remote file
     timestamp: "{{ lookup('pipe', 'date +%Y%m%d-%H%M%S') }}"
-    export_filename: "project_{{ semaphore_project_id }}_export_{{ timestamp }}.json"
-    # Full local path for clarity
-    local_export_path: "{{ local_temp_dir }}/{{ export_filename }}"
+    final_remote_filename: "project_{{ semaphore_project_id }}_export_{{ timestamp }}.json"
+    
+    # Combined UNC Path for the final destination
+    final_unc_path: "{{ smb_share_name }}{{ smb_remote_path }}"
 
   tasks:
     - name: Setup Prerequisites and Environment
@@ -45,7 +47,6 @@
 
     - name: "Call Semaphore API to Export Project JSON (SUCCESSFUL PATH)"
       ansible.builtin.uri:
-        # SUCCESSFUL PATH
         url: "{{ semaphore_api_host }}/api/project/{{ semaphore_project_id }}?export=true"
         method: GET
         headers:
@@ -56,28 +57,26 @@
 
     - name: Process Exported Data and Backup to Share
       block:
-        - name: Write the exported JSON content to a local temporary file (formatted)
+        - name: Write the exported JSON content to a local temporary file (using fixed path)
           ansible.builtin.copy:
             content: "{{ project_export_result.content | from_json | to_nice_json }}"
-            dest: "{{ local_export_path }}"
+            dest: "{{ local_temp_path }}"
             mode: '0644'
 
         - name: Copy the exported JSON file to the Windows Network Share using smbclient
-          # FIX: Reverting to ABSOLUTE path for smbclient, ensuring absolute path is quoted.
+          # FIX: Simplified command to use a direct PUT to the full UNC path, ensuring local path is quoted.
           ansible.builtin.shell: |
-            smbclient "{{ smb_share_name }}" -U "{{ share_username }}%{{ share_password }}" -c "cd \"{{ smb_remote_path }}\"; put \"{{ local_export_path }}\" \"{{ export_filename }}\""
-          # We are keeping 'no_log: true' REMOVED to catch any FINAL error (Access Denied/etc.)
-          # args:
-          #   chdir: "{{ local_temp_dir }}" # Removed chdir
-          # no_log: true 
+            smbclient "{{ smb_share_name }}" -U "{{ share_username }}%{{ share_password }}" -c "put \"{{ local_temp_path }}\" \"{{ smb_remote_path }}/{{ final_remote_filename }}\""
+          args:
+             no_log: true # Re-enabled for security, as file path error should be fixed.
 
         - name: Display Backup Status
           ansible.builtin.debug:
-            msg: "✅ Semaphore Project DB (ID: {{ semaphore_project_id }}) successfully exported and copied to {{ smb_share_name }}{{ smb_remote_path }}/{{ export_filename }}"
+            msg: "✅ Semaphore Project DB (ID: {{ semaphore_project_id }}) successfully exported and copied to {{ final_unc_path }}/{{ final_remote_filename }}"
 
       # The 'always' section guarantees cleanup runs, even if the SMB copy fails.
       always:
         - name: Clean up local temporary JSON file
           ansible.builtin.file:
-            path: "{{ local_export_path }}"
+            path: "{{ local_temp_path }}"
             state: absent
