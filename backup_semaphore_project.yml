@@ -63,12 +63,10 @@
             mode: '0644'
 
         - name: Copy the exported JSON file to the Windows Network Share using smbclient
-          # FIX: The put command needs the full path explicitly, quoted to handle spaces.
-          # The local path to put is {{ local_export_path }}.
-          # The remote name is {{ export_filename }}.
+          # TEMPORARILY REMOVED no_log: true to get the specific SMB error.
           ansible.builtin.shell: |
             smbclient "{{ smb_share_name }}" -U "{{ share_username }}%{{ share_password }}" -c "cd \"{{ smb_remote_path }}\"; put \"{{ local_export_path }}\" \"{{ export_filename }}\""
-          no_log: true # Re-enabled now that we know the cause of the failure
+          # no_log: true # Will be re-enabled after diagnosis
 
         - name: Display Backup Status
           ansible.builtin.debug:
