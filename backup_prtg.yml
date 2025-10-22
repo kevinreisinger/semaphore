@@ -1,0 +1,28 @@
+---
+- name: Run Existing PowerShell Script on Remote Windows Server
+  # Change 'windows_server' to the exact hostname you want to target.
+  hosts: WIN-SERVER-03 
+  gather_facts: no
+  
+  # Ensure Ansible is configured for Windows management (WinRM)
+  vars:
+    # Path to the .ps1 file already on the remote Windows server
+    remote_script_path: "C:\\Scripts\\my_network_copy.ps1" 
+    
+  tasks:
+    # Removed win_copy task since the script already exists on the server.
+    
+    - name: Execute PowerShell script for network copy
+      # win_shell is used to execute commands via the PowerShell shell on the Windows target.
+      ansible.windows.win_shell: |
+        # Use the call operator (&) to execute the script file.
+        # If your script accepts parameters, pass them here.
+        & "{{ remote_script_path }}"
+      args:
+        # Explicitly use powershell.exe for execution
+        executable: powershell.exe
+      register: ps_output
+      
+    - name: Display PowerShell script output (optional)
+      ansible.builtin.debug:
+        var: ps_output.stdout_lines
