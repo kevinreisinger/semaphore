@@ -95,8 +95,8 @@
 
         - name: Calculate timestamp cutoff (YYYYMMDD format)
           ansible.builtin.set_fact:
-            # FIX: Changed 'to_datetime' to 'from_unixtime' to correctly convert epoch integer to datetime object.
-            cutoff_date_str: "{{ (current_epoch.stdout | int - (backup_retention_days | int) * 86400) | int | from_unixtime | strftime('%Y%m%d') }}"
+            # FIX: Use shell pipe lookup with epoch time math. This is the most robust method across Ansible versions.
+            cutoff_date_str: "{{ lookup('pipe', 'date -d @' + ((current_epoch.stdout | int) - (backup_retention_days | int) * 86400) | string + ' +%Y%m%d') }}"
 
         - name: Get list of existing remote backups
           ansible.builtin.shell: |
