@@ -44,10 +44,10 @@
             state: directory
             mode: '0755'
 
-    - name: "Call Semaphore API to Export Project JSON (ATTEMPT 10: GET /api/ws/projects/export/ID)"
+    - name: "Call Semaphore API to Export Project JSON (ATTEMPT 11: GET /api/backup/ID)"
       ansible.builtin.uri:
-        # FIX: Trying a less common, nested path for specific Semaphore forks.
-        url: "{{ semaphore_api_host }}/api/ws/projects/export/{{ semaphore_project_id }}"
+        # 🚨 ACTION REQUIRED: Trying the high-probability path based on the file name 'backup_3_...'
+        url: "{{ semaphore_api_host }}/api/backup/{{ semaphore_project_id }}"
         method: GET 
         headers:
           Authorization: "Bearer {{ semaphore_api_token }}"
