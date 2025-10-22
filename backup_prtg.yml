@@ -1,7 +1,6 @@
 ---
-- name: Run Existing PowerShell Script on Remote Windows Server
-  # Change 'windows_server' to the exact hostname you want to target.
-  hosts: WIN-SERVER-03 
+- name: Backup PRTG
+  hosts: server2k19.reisingers.com
   gather_facts: no
   
   # Ensure Ansible is configured for Windows management (WinRM)
