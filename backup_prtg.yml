@@ -6,53 +6,96 @@
   
   # Ensure Ansible is configured for Windows management (WinRM)
   vars:
-    # Configuration from the PowerShell script:
-    # The PRTG data path is usually fixed
+    # --- PRTG Configuration ---
     prtg_data_path: "C:\\ProgramData\\Paessler\\PRTG Network Monitor"
-    # *** IMPORTANT: This must be updated to your backup destination ***
-    backup_root: "\\\\kevireis-home\\i$\\Applications\\Utilities\\PRTG Network Monitor\\Backup\\"
-    # Keep only this many most recent backups
     max_backups: 10
+    
+    # --- Network Share Configuration (Use dedicated share credentials here) ---
+    share_path: "\\\\kevireis-home\\i$\\Applications\\Utilities\\PRTG Network Monitor\\Backup"
+    # IMPORTANT: Fill in the username and password that HAS WRITE ACCESS to the share
+    share_username: ""
+    share_password: ""
+    
+    # Use a mapped drive letter for the script to avoid UNC delegation issues
+    mapped_drive_letter: "Z"
+    backup_root: "{{ mapped_drive_letter }}:\\"
     
   tasks:
     - name: Execute PRTG Backup Script (In-Memory PowerShell)
-      # The win_powershell module executes the script contents directly in memory,
-      # eliminating execution policy issues and path parsing errors.
       ansible.windows.win_powershell:
         script: |
           # --- Configuration (using Ansible variables) ---
           $prtgDataPath = "{{ prtg_data_path }}"
           $backupRoot = "{{ backup_root }}"
           $maxBackups = {{ max_backups }}
-          
+          $sharePath = "{{ share_path }}"
+          $shareUsername = "{{ share_username }}"
+          $sharePassword = ConvertTo-SecureString -String '{{ share_password }}' -AsPlainText -Force
+
           $timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm"
           $backupFile = Join-Path $backupRoot "PRTG_Backup_$timestamp.zip"
           
-          # --- Ensure backup folder exists ---
-          Write-Host "Checking backup path: $backupRoot"
-          if (!(Test-Path $backupRoot)) {
-              Write-Host "Creating backup directory..."
-              New-Item -ItemType Directory -Path $backupRoot | Out-Null
+          # --- 1. Map Network Drive with Specified Credentials ---
+          Write-Host "Attempting to map network drive $mapped_drive_letter to $sharePath with specified credentials..."
+          try {
+              # Remove any existing mapping for Z:
+              net use {{ mapped_drive_letter }}: /delete /y | Out-Null
+              
+              # Map the new drive using the provided credentials
+              $credential = New-Object System.Management.Automation.PSCredential($shareUsername, $sharePassword)
+              New-PSDrive -Name {{ mapped_drive_letter }} -PSProvider FileSystem -Root $sharePath -Credential $credential | Out-Null
+              
+              Write-Host "Network drive mapped successfully."
+          } catch {
+              Write-Error "CRITICAL ERROR: Failed to map network drive. Check credentials and path. $($_.Exception.Message)"
+              exit 1
+          }
+
+          # --- 2. Report User Context (Will show the WinRM user, but mapping uses the shared user) ---
+          Write-Host "Running under WinRM user: $env:USERNAME"
+          Write-Host "Destination path (Mapped): $backupRoot"
+          
+          # === 3. CRITICAL PATH/PERMISSION CHECK ON MAPPED DRIVE ===
+          try {
+              # Check access to the mapped path
+              $pathExists = Test-Path -Path $backupRoot -PathType Container
+              
+              if (!$pathExists) {
+                  Write-Host "Mapped backup directory does not exist. Attempting to create it..."
+                  New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
+                  Write-Host "Directory created successfully."
+              } else {
+                  Write-Host "Backup directory access confirmed."
+              }
+          } catch {
+              # This confirms a failure to the MAPPED path
+              Write-Error "CRITICAL ERROR: Failed to access or create backup path '$backupRoot'. Check mapped drive availability. $($_.Exception.Message)"
+              exit 1
           }
           
-          # --- Stop PRTG services ---
+          # --- 4. Stop PRTG services ---
           Write-Host "Stopping PRTG services..."
-          Stop-Service -Name "PRTGCoreService" -Force -ErrorAction SilentlyContinue | Out-Null
-          Stop-Service -Name "PRTGProbeService" -Force -ErrorAction SilentlyContinue | Out-Null
+          Stop-Service -Name "PRTGCoreService" -Force
+          Stop-Service -Name "PRTGProbeService" -Force
           Start-Sleep -Seconds 5
           
-          # --- Create ZIP backup ---
+          # --- 5. Create ZIP backup ---
           Write-Host "Creating backup at $backupFile ..."
-          # NOTE: The * is necessary to compress the CONTENTS of the directory, not the directory itself
-          Compress-Archive -Path "$prtgDataPath\\*" -DestinationPath $backupFile -Force
+          try {
+              Compress-Archive -Path "$prtgDataPath\\*" -DestinationPath $backupFile -Force
+              Write-Host "Compression attempt successful."
+          } catch {
+              Write-Error "CRITICAL ERROR: Failed to compress and write ZIP file. Compression failed. $($_.Exception.Message)"
+              exit 1
+          }
           
-          # --- Start PRTG services ---
+          # --- 6. Start PRTG services ---
           Write-Host "Restarting PRTG services..."
-          Start-Service -Name "PRTGCoreService" | Out-Null
-          Start-Service -Name "PRTGProbeService" | Out-Null
+          Start-Service -Name "PRTGCoreService"
+          Start-Service -Name "PRTGProbeService"
           
-          # --- Keep only the most recent $maxBackups ---
-          Write-Host "Cleaning up old backups, keeping only the last $maxBackups..."
+          # --- 7. Cleanup ---
+          Write-Host "Cleaning up old backups..."
           $backups = Get-ChildItem -Path $backupRoot -Filter "PRTG_Backup_*.zip" |
                       Sort-Object LastWriteTime -Descending
           
@@ -63,6 +106,10 @@
                   Remove-Item $file.FullName -Force
               }
           }
+          
+          # --- 8. Unmap Drive ---
+          Write-Host "Unmapping network drive Z:..."
+          net use Z: /delete /y | Out-Null
           
           Write-Host "Backup completed successfully!"
       register: ps_output
