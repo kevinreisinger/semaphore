@@ -44,11 +44,11 @@
             state: directory
             mode: '0755'
 
-    - name: "Call Semaphore API to Export Project JSON (ATTEMPT 7: POST to /projects/ID?export=true)"
+    - name: "Call Semaphore API to Export Project JSON (ATTEMPT 8: GET /project/ID/export)"
       ansible.builtin.uri:
-        # FIX: Reverting to the only successful URL, but changing method to POST to trigger export logic.
-        url: "{{ semaphore_api_host }}/api/projects/{{ semaphore_project_id }}?export=true"
-        method: POST 
+        # FIX: Trying singular 'project' with the original export action.
+        url: "{{ semaphore_api_host }}/api/project/{{ semaphore_project_id }}/export"
+        method: GET 
         headers:
           Authorization: "Bearer {{ semaphore_api_token }}"
         return_content: true
