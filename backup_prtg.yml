@@ -6,7 +6,7 @@
   # Ensure Ansible is configured for Windows management (WinRM)
   vars:
     # Path to the .ps1 file already on the remote Windows server
-    remote_script_path: "C:\\Scripts\\my_network_copy.ps1" 
+    remote_script_path: "C:\\ProgramData\\Paessler\\PRTG Network Monitor\\Configuration Auto-Backups\\PRTG_Backup.ps1" 
     
   tasks:
     # Removed win_copy task since the script already exists on the server.
