@@ -1,10 +1,6 @@
 ---
-- name: Rewritten Semaphore Project Backup to Windows Share
-  # This playbook runs on the Ansible Controller/Semaphore Host.
+- name: Backup Semaphore Project
   hosts: localhost
-  # Removing gather_facts: no to avoid the undefined variable error later, 
-  # or we can use the shell command to get the epoch time manually.
-  # Using shell command is faster than gathering all facts.
   gather_facts: no
   connection: local
 
