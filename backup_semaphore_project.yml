@@ -16,6 +16,9 @@
     smb_remote_path: "/Applications/Semaphore/Backup/Reisingers Project" # Subdirectory inside the share
     share_username: ""
     share_password: "" 
+    
+    # --- CLEANUP CONFIGURATION ---
+    backup_retention_days: 30 # Files older than this will be deleted from the remote share
 
     # --- BACKUP FILE CONFIGURATION ---
     local_temp_dir: "/tmp/semaphore_db_export"
@@ -78,3 +81,29 @@
           ansible.builtin.file:
             path: "{{ local_temp_path }}"
             state: absent
+
+    - name: Cleanup Old Remote Backups
+      block:
+        - name: Calculate timestamp cutoff (YYYYMMDD format)
+          ansible.builtin.set_fact:
+            # Subtract 30 days in seconds (30 * 86400) from the current epoch time.
+            cutoff_date_str: "{{ (ansible_date_time.epoch | int - (backup_retention_days | int) * 86400) | int | to_datetime | strftime('%Y%m%d') }}"
+
+        - name: Get list of existing remote backups
+          ansible.builtin.shell: |
+            # Use ls -N (no size/date) and filter for files matching the pattern.
+            smbclient "{{ smb_share_name }}" -U "{{ share_username }}%{{ share_password }}" -c "cd \"{{ smb_remote_path }}\"; ls -N" | grep "^project_{{ semaphore_project_id }}_export_"
+          register: remote_files
+          changed_when: false
+          no_log: true 
+
+        - name: Delete files older than {{ backup_retention_days }} days from share
+          ansible.builtin.shell: |
+            smbclient "{{ smb_share_name }}" -U "{{ share_username }}%{{ share_password }}" -c "cd \"{{ smb_remote_path }}\"; del \"{{ filename }}\""
+          loop: "{{ remote_files.stdout_lines }}"
+          loop_control:
+            loop_var: filename
+          # Check: Is the extracted date (YYYYMMDD) less than the cutoff date?
+          when: |
+            filename is search('project_') and
+            (filename | regex_search('^project_[0-9]+_export_([0-9]{8})-[0-9]{6}\\.json$', '\\1') | first | default('99999999')) < cutoff_date_str
