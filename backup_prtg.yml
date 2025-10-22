@@ -1,11 +1,12 @@
 ---
-- name: Backup PRTG
-  hosts: server2k19.reisingers.com
+- name: Run Existing PowerShell Script on Remote Windows Server
+  # Change 'windows_server' to the exact hostname you want to target.
+  hosts: server2k19.reisingers.com # Targeted based on failure log
   gather_facts: no
   
   # Ensure Ansible is configured for Windows management (WinRM)
   vars:
-    # Path to the .ps1 file already on the remote Windows server
+    # UPDATED: Path to the .ps1 file already on the remote Windows server (using path from error log)
     remote_script_path: "C:\\ProgramData\\Paessler\\PRTG Network Monitor\\Configuration Auto-Backups\\PRTG_Backup.ps1" 
     
   tasks:
@@ -14,9 +15,9 @@
     - name: Execute PowerShell script for network copy
       # win_shell is used to execute commands via the PowerShell shell on the Windows target.
       ansible.windows.win_shell: |
-        # Use the call operator (&) to execute the script file.
-        # If your script accepts parameters, pass them here.
-        & "{{ remote_script_path }}"
+        # FIX: The path contains spaces. We must wrap the call operator (&) and the path in parentheses.
+        & ("{{ remote_script_path }}")
+        # If your script accepts parameters, pass them here: & ("{{ remote_script_path }}") -Param Value
       args:
         # Explicitly use powershell.exe for execution
         executable: powershell.exe
