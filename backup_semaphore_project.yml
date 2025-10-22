@@ -63,10 +63,12 @@
             mode: '0644'
 
         - name: Copy the exported JSON file to the Windows Network Share using smbclient
-          # TEMPORARILY REMOVED no_log: true to get the specific SMB error.
+          # FIX: Use 'chdir' to set the working directory and use simple filename for 'put'.
           ansible.builtin.shell: |
-            smbclient "{{ smb_share_name }}" -U "{{ share_username }}%{{ share_password }}" -c "cd \"{{ smb_remote_path }}\"; put \"{{ local_export_path }}\" \"{{ export_filename }}\""
-          # no_log: true # Will be re-enabled after diagnosis
+            smbclient "{{ smb_share_name }}" -U "{{ share_username }}%{{ share_password }}" -c "cd \"{{ smb_remote_path }}\"; put \"{{ export_filename }}\" \"{{ export_filename }}\""
+          args:
+            chdir: "{{ local_temp_dir }}" # Execute the command from this directory
+          no_log: true # Re-enabled for security
 
         - name: Display Backup Status
           ansible.builtin.debug:
