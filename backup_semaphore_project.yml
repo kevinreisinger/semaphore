@@ -13,9 +13,8 @@
     semaphore_project_id: 3
 
     # --- WINDOWS NETWORK SHARE CONFIGURATION ---
-    # IMPORTANT: The share name MUST be in the format //SERVERNAME/SHARENAME
+    # The share name MUST be in the format //SERVERNAME/SHARENAME
     # For administrative shares like i$, the share name is 'i$'. The directory path comes after.
-    # We will split the UNC path into the share part and the directory path part.
     # UNC path was: //kevireis-home/i$/Applications/Semaphore/Backup/Reisingers Project
     smb_share_name: "//kevireis-home/i$"
     smb_remote_path: "/Applications/Semaphore/Backup/Reisingers Project" # Subdirectory inside the share
@@ -64,12 +63,11 @@
             mode: '0644'
 
         - name: Copy the exported JSON file to the Windows Network Share using smbclient
-          # Re-adding no_log: true as the error is now network related, not credential related.
-          # FIX: Splitting the connection and directory navigation using 'cd'.
-          # Note: Windows paths use backslashes, but smbclient often prefers forward slashes.
+          # TEMPORARY FIX: no_log: true is removed so we can see the smbclient error output.
+          # FIX: Quoted the 'cd' path to handle spaces correctly.
           ansible.builtin.shell: |
-            smbclient "{{ smb_share_name }}" -U "{{ share_username }}%{{ share_password }}" -c "cd {{ smb_remote_path }}; put {{ local_export_path }} {{ export_filename }}"
-          no_log: true
+            smbclient "{{ smb_share_name }}" -U "{{ share_username }}%{{ share_password }}" -c "cd \"{{ smb_remote_path }}\"; put {{ local_export_path }} {{ export_filename }}"
+          # no_log: true # Re-enable this once debugging is complete!
 
         - name: Display Backup Status
           ansible.builtin.debug:
