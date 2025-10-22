@@ -13,10 +13,14 @@
     semaphore_project_id: 3
 
     # --- WINDOWS NETWORK SHARE CONFIGURATION ---
-    # IMPORTANT: Ensure these variables are correctly set for the target share.
-    smb_unc_path: "//kevireis-home/i$/Applications/Semaphore/Backup/Reisingers Project"
+    # IMPORTANT: The share name MUST be in the format //SERVERNAME/SHARENAME
+    # For administrative shares like i$, the share name is 'i$'. The directory path comes after.
+    # We will split the UNC path into the share part and the directory path part.
+    # UNC path was: //kevireis-home/i$/Applications/Semaphore/Backup/Reisingers Project
+    smb_share_name: "//kevireis-home/i$"
+    smb_remote_path: "/Applications/Semaphore/Backup/Reisingers Project" # Subdirectory inside the share
     share_username: ""
-    share_password: "" # Use the correct variable name here for consistency
+    share_password: "" 
 
     # --- BACKUP FILE CONFIGURATION ---
     local_temp_dir: "/tmp/semaphore_db_export"
@@ -60,14 +64,16 @@
             mode: '0644'
 
         - name: Copy the exported JSON file to the Windows Network Share using smbclient
-          # TEMPORARY FIX: no_log: true is removed so we can see the smbclient error output.
-          # We need to see the output to diagnose the network/credential issue.
+          # Re-adding no_log: true as the error is now network related, not credential related.
+          # FIX: Splitting the connection and directory navigation using 'cd'.
+          # Note: Windows paths use backslashes, but smbclient often prefers forward slashes.
           ansible.builtin.shell: |
-            smbclient "{{ smb_unc_path }}" -U "{{ share_username }}%{{ share_password }}" -c "put {{ local_export_path }} {{ export_filename }}"
+            smbclient "{{ smb_share_name }}" -U "{{ share_username }}%{{ share_password }}" -c "cd {{ smb_remote_path }}; put {{ local_export_path }} {{ export_filename }}"
+          no_log: true
 
         - name: Display Backup Status
           ansible.builtin.debug:
-            msg: "✅ Semaphore Project DB (ID: {{ semaphore_project_id }}) successfully exported and copied to {{ smb_unc_path }}/{{ export_filename }}"
+            msg: "✅ Semaphore Project DB (ID: {{ semaphore_project_id }}) successfully exported and copied to {{ smb_share_name }}{{ smb_remote_path }}/{{ export_filename }}"
 
       # The 'always' section guarantees cleanup runs, even if the SMB copy fails.
       always:
