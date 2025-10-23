@@ -12,8 +12,8 @@
     
     # --- NETWORK SHARE CREDENTIALS (MUST BE POPULATED!) ---
     # User who HAS WRITE ACCESS to the final network share destination
-    share_username: "PUT_YOUR_SHARE_USER_HERE" 
-    share_password: "PUT_YOUR_SHARE_PASSWORD_HERE" # USE ANSIBLE VAULT FOR THIS
+    share_username: "" 
+    share_password: ""
     final_network_share: "\\\\kevireis-home\\i$\\Applications\\Utilities\\PRTG Network Monitor\\Backup"
     
     # Drive letter for temporary mapping (Must be unused)
