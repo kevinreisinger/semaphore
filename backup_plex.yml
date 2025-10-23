@@ -139,13 +139,3 @@
           Write-Host "Plex Backup and Transfer completed successfully!"
 
       register: ps_output
-      
-    - name: Display PowerShell script output
-      ansible.builtin.debug:
-        var: ps_output.stdout_lines
-        
-    - name: Ensure temporary log file is cleaned up (Legacy)
-      ansible.windows.win_file:
-        path: C:\Temp\plex_diag_log.txt
-        state: absent
-      ignore_errors: yes
