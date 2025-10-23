@@ -170,11 +170,25 @@
           Write-Host "--- END DIAGNOSTIC LOG CONTENT ---`n"
 
       register: ps_output
+      # Ensure Ansible registers failure correctly if the script exits with non-zero code.
+      # ignore_errors: yes # Removed this to allow proper failure detection
 
     - name: Display PowerShell log content (Captured via stdout)
       ansible.builtin.debug:
-        msg: "{{ ps_output.stdout }}"
-      
+        # Use the default filter to print stdout if available, or dump the whole variable if not (due to failure)
+        msg: |
+          {% if ps_output.stdout is defined %}
+            {{ ps_output.stdout }}
+          {% else %}
+            --- CRITICAL DIAGNOSTIC DUMP ---
+            The PowerShell script likely hit an EXIT 1 command, causing stdout to be missing.
+            Below is the full output object which contains the error messages:
+            {{ ps_output | to_nice_json }}
+          {% endif %}
+      # Ignore the error on this task so the final cleanup task can still run.
+      ignore_errors: true
+      when: ps_output is defined # Only run if the previous task created the ps_output variable
+
     - name: Clean up temporary diagnostic log file
       ansible.windows.win_file:
         path: "{{ diagnostic_log_path }}"
