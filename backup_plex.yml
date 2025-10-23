@@ -15,8 +15,8 @@
     max_backups_to_keep: 10
     
     # --- NETWORK SHARE CONFIGURATION (MUST BE POPULATED!) ---
-    share_username: "" 
-    share_password: ""
+    share_username: "PUT_YOUR_SHARE_USER_HERE" 
+    share_password: "PUT_YOUR_SHARE_PASSWORD_HERE" # Use Ansible Vault for security!
     final_network_share: "\\\\kevireis-home\\i$\\Applications\\Plex Media Server\\Backup"
     
     # Drive letter for temporary mapping (Must be unused)
@@ -155,4 +155,4 @@
 
     - name: Display PowerShell script output for diagnostics
       ansible.builtin.debug:
-        var: ps_output.stdout_lines
+        var: ps_output.stdout # CHANGED: Using stdout instead of stdout_lines
