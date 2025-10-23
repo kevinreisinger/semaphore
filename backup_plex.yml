@@ -7,9 +7,7 @@
   vars:
     # --- PLEX & LOCAL CONFIGURATION ---
     plex_service_name: "PlexService"
-    # *** CORRECTED PATH ***
-    # Changed from $env:LOCALAPPDATA to $env:ProgramData, as Plex data is often stored here 
-    # when running as a service, resolving the WinRM user context issue.
+    # Current guess is $env:ProgramData path. We need to confirm this with the log file.
     plex_data_path: "$env:ProgramData\\Plex\\Plex Media Server" 
     local_backup_root: "C:\\Program Files (x86)\\Plex Service\\Backup"
     local_staging_path: "{{ local_backup_root }}\\Staging"
@@ -91,7 +89,6 @@
           # --- 2. Copy Plex data (excluding Logs) to staging ---
           Write-Log "Copying Plex data from $resolvedPathOutput to staging folder $localStagingPath..."
           # Note: robocopy sets $LASTEXITCODE based on copy status, not just 0/1 for success/fail
-          # We use the raw, unresolved path for robocopy if resolve-path failed, though it will likely be empty.
           $sourcePath = if ($resolvedPath) { $resolvedPath.Path } else { "$plexDataPath" }
           robocopy "$sourcePath" "$localStagingPath" /MIR /XF *.log /XD Logs | Out-Null
           
@@ -103,15 +100,15 @@
           Write-Log "INFO: Staging folder contains $StagingCount items."
 
           if ($StagingCount -eq 0) {
-              Write-Log "CRITICAL ERROR: Staging folder is EMPTY after Robocopy. The path is almost certainly incorrect. Exiting."
-              Restart-Services
-              exit 1
+              Write-Log "CRITICAL WARNING: Staging folder is EMPTY after Robocopy. The path is almost certainly incorrect, but proceeding to allow manual diagnosis."
+              # Changed from exit 1 to just a log entry
           }
 
           # --- 3. Create ZIP from staging ---
           Write-Log "Creating ZIP backup at $localBackupFile ..."
           try {
               if (Test-Path $localBackupFile) { Remove-Item $localBackupFile -Force }
+              # This will create an empty ZIP if the staging folder is empty, but the transfer logic will still run.
               Compress-Archive -Path "$localStagingPath\*" -DestinationPath $localBackupFile -Force
           }
           catch {
@@ -160,6 +157,7 @@
 
           # --- 9. Final Cleanup (Local ZIP and Drive) ---
           Write-Log "Removing local file $localBackupFile and unmapping drive ${mappedDriveLetter}: ..."
+          # NOTE: The local zip file is removed AFTER successful copy.
           Remove-Item $localBackupFile -Force -ErrorAction SilentlyContinue
           cmd.exe /c net use ${mappedDriveLetter}: /delete /y | Out-Null
           
@@ -179,15 +177,9 @@
             {{ ps_output.stdout }}
           {% else %}
             --- CRITICAL DIAGNOSTIC DUMP ---
-            The PowerShell script likely hit an EXIT 1 command, causing stdout to be missing.
+            The PowerShell script likely hit an EXIT command, causing stdout to be missing.
             Below is the full output object which contains the error messages:
             {{ ps_output | to_nice_json }}
           {% endif %}
       ignore_errors: true
       when: ps_output is defined
-
-    - name: Clean up temporary diagnostic log file
-      ansible.windows.win_file:
-        path: "{{ diagnostic_log_path }}"
-        state: absent
-      ignore_errors: yes
