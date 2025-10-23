@@ -1,122 +1,127 @@
 ---
-- name: Run Existing PowerShell Script on Remote Windows Server
-  # Change 'windows_server' to the exact hostname you want to target.
+- name: Automated PRTG Configuration Backup (Local Execution + Explicit Share Credentials)
+  # Target the specific Windows Server where the PRTG data resides
   hosts: server2k19.reisingers.com
   gather_facts: no
-  
-  # Ensure Ansible is configured for Windows management (WinRM)
+
   vars:
-    # --- PRTG Configuration ---
+    # --- PRTG & Local Configuration ---
     prtg_data_path: "C:\\ProgramData\\Paessler\\PRTG Network Monitor"
-    max_backups: 10
+    local_temp_backup_root: "C:\\Temp\\PRTG_Backup"
+    max_backups_to_keep: 10
     
-    # --- Network Share Configuration (Use dedicated share credentials here) ---
-    share_path: "\\\\kevireis-home\\i$\\Applications\\Utilities\\PRTG Network Monitor\\Backup"
-    # IMPORTANT: Fill in the username and password that HAS WRITE ACCESS to the share
-    share_username: ""
-    share_password: ""
+    # --- NETWORK SHARE CREDENTIALS (MUST BE POPULATED!) ---
+    # User who HAS WRITE ACCESS to the final network share destination
+    share_username: "PUT_YOUR_SHARE_USER_HERE" 
+    share_password: "PUT_YOUR_SHARE_PASSWORD_HERE" # USE ANSIBLE VAULT FOR THIS
+    final_network_share: "\\\\kevireis-home\\i$\\Applications\\Utilities\\PRTG Network Monitor\\Backup"
     
-    # Use a mapped drive letter for the script to avoid UNC delegation issues
-    mapped_drive_letter: "Z"
-    backup_root: "{{ mapped_drive_letter }}:\\"
-    
+    # Drive letter for temporary mapping (Must be unused)
+    mapped_drive_letter: "Z" 
+
+    # Internal variable generation
+    current_timestamp: "{{ lookup('pipe', 'date +%Y-%m-%d_%H-%M') }}"
+    local_backup_file: "{{ local_temp_backup_root }}\\{{ 'PRTG_Backup_' + current_timestamp + '.zip' }}"
+    final_backup_file: "{{ mapped_drive_letter }}:\\{{ 'PRTG_Backup_' + current_timestamp + '.zip' }}"
+
   tasks:
-    - name: Execute PRTG Backup Script (In-Memory PowerShell)
+
+    - name: Ensure local temporary backup directory exists
+      ansible.windows.win_file:
+        path: "{{ local_temp_backup_root }}"
+        state: directory
+
+    - name: Execute PRTG Backup and Network Copy Script (Single PowerShell Block)
       ansible.windows.win_powershell:
         script: |
-          # --- Configuration (using Ansible variables) ---
-          $prtgDataPath = "{{ prtg_data_path }}"
-          $backupRoot = "{{ backup_root }}"
-          $maxBackups = {{ max_backups }}
-          $sharePath = "{{ share_path }}"
-          $shareUsername = "{{ share_username }}"
-          $sharePassword = '{{ share_password }}' # Plain text password for net use command
+          # --- Configuration (Pulled from Ansible variables) ---
+          $prtgDataPath = '{{ prtg_data_path }}'
+          $localBackupRoot = '{{ local_temp_backup_root }}'
+          $maxBackups = {{ max_backups_to_keep }}
+          $localBackupFile = '{{ local_backup_file }}'
+          $finalNetworkShare = '{{ final_network_share }}'
+          $mappedDriveLetter = '{{ mapped_drive_letter }}'
+          $finalBackupFile = '{{ final_backup_file }}'
+          $shareUsername = '{{ share_username }}'
+          $sharePassword = '{{ share_password }}' 
+          
+          # Helper function to ensure services are restarted on failure
+          function Restart-Services {
+              Write-Host "Attempting to restart services..."
+              Start-Service -Name "PRTGCoreService" -ErrorAction SilentlyContinue
+              Start-Service -Name "PRTGProbeService" -ErrorAction SilentlyContinue
+          }
+          
+          # --- 1. Stop PRTG services ---
+          Write-Host "Stopping PRTG services..."
+          Stop-Service -Name "PRTGCoreService" -Force -ErrorAction Stop
+          Stop-Service -Name "PRTGProbeService" -Force -ErrorAction Stop
+          Start-Sleep -Seconds 5
 
-          $timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm"
-          $backupFile = Join-Path $backupRoot "PRTG_Backup_$timestamp.zip"
+          # --- 2. Create ZIP backup (Locally) ---
+          Write-Host "Creating local backup at $localBackupFile ..."
+          try {
+              Compress-Archive -Path "$prtgDataPath\*" -DestinationPath $localBackupFile -Force
+          }
+          catch {
+              Write-Host "CRITICAL ERROR: Failed to compress and write ZIP file. Error Details: $($_.Exception.Message)"
+              Restart-Services
+              exit 1
+          }
+
+          # --- 3. Map Network Drive with Specified Credentials ---
+          Write-Host "Attempting to map network drive ${mappedDriveLetter}: to ${finalNetworkShare} with specified credentials..."
           
-          # --- 1. Map Network Drive with Specified Credentials using net use (Most reliable) ---
-          Write-Host "Attempting to map network drive $mapped_drive_letter to $sharePath with specified credentials..."
-          
-          # Remove any existing mapping for Z: silently
-          net use {{ mapped_drive_letter }}: /delete /y | Out-Null
+          # Remove any existing mapping for the drive letter silently
+          cmd.exe /c net use ${mappedDriveLetter}: /delete /y | Out-Null
           
           # Map the new drive using net use, forcing the share credentials
-          $mapResult = net use {{ mapped_drive_letter }}: "$sharePath" "$sharePassword" /user:"$shareUsername" /persistent:no
+          cmd.exe /c net use ${mappedDriveLetter}: "${finalNetworkShare}" "${sharePassword}" /user:"${shareUsername}" /persistent:no
           
           if ($LASTEXITCODE -ne 0) {
-              # If net use fails, Ansible must catch this
-              Write-Error "CRITICAL ERROR (net use failed): Failed to map network drive. Code $LASTEXITCODE. Output: $mapResult"
+              Write-Host "CRITICAL ERROR: Failed to map network drive. Code $LASTEXITCODE. Check firewall/permissions on the share."
+              Remove-Item $localBackupFile -Force -ErrorAction SilentlyContinue
+              Restart-Services
               exit 1
           }
           Write-Host "Network drive mapped successfully."
-          
-          # --- 2. Report User Context ---
-          Write-Host "Running under WinRM user: $env:USERNAME"
-          Write-Host "Destination path (Mapped): $backupRoot"
-          
-          # === 3. CRITICAL PATH/PERMISSION CHECK ON MAPPED DRIVE ===
+
+          # --- 4. Copy Local ZIP to Mapped Drive ---
+          Write-Host "Copying $localBackupFile to $finalBackupFile ..."
           try {
-              # Check access to the mapped path
-              $pathExists = Test-Path -Path $backupRoot -PathType Container
-              
-              if (!$pathExists) {
-                  Write-Host "Mapped backup directory does not exist. Attempting to create it..."
-                  New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
-                  Write-Host "Directory created successfully."
-              } else {
-                  Write-Host "Backup directory access confirmed."
-              }
+              Copy-Item -Path $localBackupFile -Destination $finalBackupFile -Force
           } catch {
-              # If the folder check fails, exit loudly
-              Write-Error "CRITICAL ERROR: Failed to access or create backup path '$backupRoot'. Check mapped drive availability. $($_.Exception.Message)"
+              Write-Host "CRITICAL ERROR: Failed to copy file to network share. Check credentials/permissions. $($_.Exception.Message)"
+              # Attempt unmap/cleanup before exit
+              cmd.exe /c net use ${mappedDriveLetter}: /delete /y | Out-Null
+              Remove-Item $localBackupFile -Force -ErrorAction SilentlyContinue
+              Restart-Services
               exit 1
           }
-          
-          # --- 4. Stop PRTG services ---
-          Write-Host "Stopping PRTG services..."
-          Stop-Service -Name "PRTGCoreService" -Force
-          Stop-Service -Name "PRTGProbeService" -Force
-          Start-Sleep -Seconds 5
-          
-          # --- 5. Create ZIP backup ---
-          Write-Host "Creating backup at $backupFile ..."
-          try {
-              Compress-Archive -Path "$prtgDataPath\\*" -DestinationPath $backupFile -Force
-              Write-Host "Compression attempt successful."
-          } catch {
-              # If Compress-Archive fails (file lock or path issue), report it.
-              Write-Error "CRITICAL ERROR: Failed to compress and write ZIP file. Compression failed. $($_.Exception.Message)"
-              exit 1
-          }
-          
-          # --- 6. Start PRTG services ---
-          Write-Host "Restarting PRTG services..."
-          Start-Service -Name "PRTGCoreService"
-          Start-Service -Name "PRTGProbeService"
-          
-          # --- 7. Cleanup ---
-          Write-Host "Cleaning up old backups..."
-          # ... (rest of cleanup logic)
-          $backups = Get-ChildItem -Path $backupRoot -Filter "PRTG_Backup_*.zip" |
+
+          # --- 5. Cleanup (Network Share Retention) ---
+          Write-Host "Cleaning up old NETWORK backups, keeping only the last $maxBackups..."
+          $backups = Get-ChildItem -Path ${mappedDriveLetter}:\\ -Filter "PRTG_Backup_*.zip" |
                       Sort-Object LastWriteTime -Descending
-          
+
           if ($backups.Count -gt $maxBackups) {
               $toDelete = $backups | Select-Object -Skip $maxBackups
               foreach ($file in $toDelete) {
-                  Write-Host "Deleting old backup: $($file.FullName)"
+                  Write-Host "Deleting old network backup: $($file.FullName)"
                   Remove-Item $file.FullName -Force
               }
           }
+
+          # --- 6. Final Cleanup (Local ZIP and Drive) ---
+          Write-Host "Removing local file $localBackupFile and unmapping drive ${mappedDriveLetter}: ..."
+          Remove-Item $localBackupFile -Force -ErrorAction SilentlyContinue
+          cmd.exe /c net use ${mappedDriveLetter}: /delete /y | Out-Null
           
-          # --- 8. Unmap Drive ---
-          Write-Host "Unmapping network drive Z:..."
-          # Use net use /delete again, capturing output to prevent errors if the mapping is already gone.
-          net use Z: /delete /y | Out-Null
+          # --- 7. Start PRTG services ---
+          Restart-Services
           
-          Write-Host "Backup completed successfully!"
-      register: ps_output
-      
+          Write-Host "Backup and Transfer completed successfully!"
+
     - name: Display PowerShell script output
       ansible.builtin.debug:
-        var: ps_output
+        var: ps_output.stdout_lines
