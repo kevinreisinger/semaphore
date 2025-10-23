@@ -15,8 +15,9 @@
     max_backups_to_keep: 10
     
     # --- NETWORK SHARE CONFIGURATION (MUST BE POPULATED!) ---
+    # NOTE: These values must be provided securely at runtime (e.g., via Ansible Vault)
     share_username: "" 
-    share_password: ""
+    share_password: "" 
     final_network_share: "\\\\kevireis-home\\i$\\Applications\\Plex Media Server\\Backup"
     
     # Drive letter for temporary mapping (Must be unused)
@@ -82,16 +83,20 @@
           # === DIAGNOSTIC CHECK 1: Verify the data source path ===
           Write-Log "INFO: WinRM User is running this script."
           $resolvedPath = (Resolve-Path "$plexDataPath" -ErrorAction SilentlyContinue)
-          Write-Log "INFO: \$plexDataPath resolved to: $($resolvedPath.Path)"
+          # If Resolve-Path fails, $resolvedPath is null. Use the raw path for logging if it's null.
+          $resolvedPathOutput = if ($resolvedPath) { $resolvedPath.Path } else { "Path not resolved (possible non-existence): $plexDataPath" }
+          Write-Log "INFO: \$plexDataPath resolved to: $resolvedPathOutput"
           
           # --- 2. Copy Plex data (excluding Logs) to staging ---
-          Write-Log "Copying Plex data from $resolvedPath to staging folder $localStagingPath..."
+          Write-Log "Copying Plex data from $resolvedPathOutput to staging folder $localStagingPath..."
           # Note: robocopy sets $LASTEXITCODE based on copy status, not just 0/1 for success/fail
-          robocopy "$resolvedPath" "$localStagingPath" /MIR /XF *.log /XD Logs | Out-Null
+          # We use the raw, unresolved path for robocopy if resolve-path failed, though it will likely be empty.
+          $sourcePath = if ($resolvedPath) { $resolvedPath.Path } else { "$plexDataPath" }
+          robocopy "$sourcePath" "$localStagingPath" /MIR /XF *.log /XD Logs | Out-Null
           
           # === DIAGNOSTIC CHECK 2: Check robocopy result and staging contents ===
           $RoboCopyExitCode = $LASTEXITCODE
-          Write-Log "INFO: Robocopy Exit Code was $RoboCopyExitCode."
+          Write-Log "INFO: Robocopy Exit Code was $RoboCopyExitCode. (0=No files copied, 1=Success, 8=Some files failed)"
 
           $StagingCount = (Get-ChildItem -Path $localStagingPath -Force | Measure-Object).Count
           Write-Log "INFO: Staging folder contains $StagingCount items."
@@ -121,8 +126,7 @@
           # --- 5. Restart Plex service ---
           Restart-Services
           
-          # --- 6. Map Network Drive and Copy ---
-          # (Steps 6, 7, 8, 9 for network copy/cleanup remain the same, using Write-Log)
+          # --- 6. Map Network Drive and Copy (Network steps unchanged) ---
           Write-Log "Attempting to map network drive ${mappedDriveLetter}: to ${finalNetworkShare}..."
           cmd.exe /c net use ${mappedDriveLetter}: /delete /y | Out-Null
           cmd.exe /c net use ${mappedDriveLetter}: "${finalNetworkShare}" "${sharePassword}" /user:"${shareUsername}" /persistent:no
@@ -153,25 +157,24 @@
               }
           }
 
+          # --- 9. Final Cleanup (Local ZIP and Drive) ---
           Write-Log "Removing local file $localBackupFile and unmapping drive ${mappedDriveLetter}: ..."
           Remove-Item $localBackupFile -Force -ErrorAction SilentlyContinue
           cmd.exe /c net use ${mappedDriveLetter}: /delete /y | Out-Null
           
           Write-Log "Plex Backup and Transfer completed successfully!"
-      
-    - name: Retrieve diagnostic log file content (win_slurp)
-      ansible.windows.win_slurp:
-        src: "{{ diagnostic_log_path }}"
-      register: log_content
-      # Only run if the previous task (PowerShell) was successful (not failed)
-      when: not log_content.failed is defined or log_content.failed == false
-      ignore_errors: yes
+          
+          # === FINAL DIAGNOSTIC OUTPUT (Captured by Ansible stdout) ===
+          Write-Host "`n--- START DIAGNOSTIC LOG CONTENT ---"
+          Get-Content -Path $logPath -Encoding UTF8
+          Write-Host "--- END DIAGNOSTIC LOG CONTENT ---`n"
 
-    - name: Display diagnostic log content
+      register: ps_output
+
+    - name: Display PowerShell log content (Captured via stdout)
       ansible.builtin.debug:
-        msg: "{{ log_content['content'] | b64decode }}"
-      when: log_content is defined and log_content.content is defined
-
+        msg: "{{ ps_output.stdout }}"
+      
     - name: Clean up temporary diagnostic log file
       ansible.windows.win_file:
         path: "{{ diagnostic_log_path }}"
