@@ -1,5 +1,5 @@
 ---
-- name: Automated PRTG Configuration Backup (Local Execution + Explicit Share Credentials)
+- name: Backup PRTG
   # Target the specific Windows Server where the PRTG data resides
   hosts: server2k19.reisingers.com
   gather_facts: no
