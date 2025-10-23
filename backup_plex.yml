@@ -15,12 +15,15 @@
     max_backups_to_keep: 10
     
     # --- NETWORK SHARE CONFIGURATION (MUST BE POPULATED!) ---
-    share_username: "PUT_YOUR_SHARE_USER_HERE" 
-    share_password: "PUT_YOUR_SHARE_PASSWORD_HERE" # Use Ansible Vault for security!
+    share_username: "" 
+    share_password: ""
     final_network_share: "\\\\kevireis-home\\i$\\Applications\\Plex Media Server\\Backup"
     
     # Drive letter for temporary mapping (Must be unused)
     mapped_drive_letter: "Z" 
+
+    # Log file location
+    diagnostic_log_path: "C:\\Temp\\plex_diag_log.txt"
 
     # Internal variable generation
     current_timestamp: "{{ lookup('pipe', 'date +%Y-%m-%d_%H-%M') }}"
@@ -29,20 +32,35 @@
 
   tasks:
 
-    - name: Ensure local temporary and staging directories exist
+    - name: Ensure local temporary, staging, and C:\Temp directories exist
       ansible.windows.win_file:
         path: "{{ item }}"
         state: directory
       loop:
         - "{{ local_backup_root }}"
         - "{{ local_staging_path }}"
+        - "C:\\Temp"
 
-    - name: Execute Plex Backup and Network Copy Script (Single PowerShell Block)
+    - name: Execute Plex Backup and Network Copy Script (Capturing Output to Log File)
       ansible.windows.win_powershell:
+        # PowerShell script is piped into Out-File to capture all output
         script: |
+          $logPath = '{{ diagnostic_log_path }}'
+          
+          # --- Helper Functions ---
+          function Write-Log ($message) {
+              $timestamp = Get-Date -Format "HH:mm:ss"
+              "$timestamp - $message" | Out-File -FilePath $logPath -Append -Encoding UTF8
+          }
+          
+          function Restart-Services {
+              Write-Log "Attempting to restart Plex Media Server service..."
+              Start-Service -Name '{{ plex_service_name }}' -ErrorAction SilentlyContinue
+          }
+          
           # --- Configuration (Pulled from Ansible variables) ---
           $plexService = '{{ plex_service_name }}'
-          $plexDataPath = '{{ plex_data_path }}' # Using $env:LOCALAPPDATA here
+          $plexDataPath = '{{ plex_data_path }}' 
           $localStagingPath = '{{ local_staging_path }}'
           $localBackupFile = '{{ local_backup_file }}'
           $maxBackups = {{ max_backups_to_keep }}
@@ -52,107 +70,110 @@
           $shareUsername = '{{ share_username }}'
           $sharePassword = '{{ share_password }}' 
           
-          # Helper function to ensure services are restarted on failure
-          function Restart-Services {
-              Write-Host "Attempting to restart Plex Media Server service..."
-              Start-Service -Name $plexService -ErrorAction SilentlyContinue
-          }
-
+          # Start fresh log file
+          "--- PLEX BACKUP DIAGNOSTICS START ---" | Out-File -FilePath $logPath -Encoding UTF8
+          
           # --- 1. Stop Plex service ---
-          Write-Host "Stopping Plex Media Server service ($plexService)..."
+          Write-Log "Stopping Plex Media Server service ($plexService)..."
           Stop-Service -Name $plexService -Force -ErrorAction Stop
           Start-Sleep -Seconds 5
-          # Stop any residual Plex processes
           Get-Process -Name "Plex*" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           
           # === DIAGNOSTIC CHECK 1: Verify the data source path ===
-          Write-Host "INFO: WinRM User is running this script. $plexDataPath resolves to:"
-          Write-Host (Resolve-Path "$plexDataPath" -ErrorAction SilentlyContinue)
-
+          Write-Log "INFO: WinRM User is running this script."
+          $resolvedPath = (Resolve-Path "$plexDataPath" -ErrorAction SilentlyContinue)
+          Write-Log "INFO: \$plexDataPath resolved to: $($resolvedPath.Path)"
+          
           # --- 2. Copy Plex data (excluding Logs) to staging ---
-          Write-Host "Copying Plex data from $plexDataPath to staging folder $localStagingPath..."
+          Write-Log "Copying Plex data from $resolvedPath to staging folder $localStagingPath..."
           # Note: robocopy sets $LASTEXITCODE based on copy status, not just 0/1 for success/fail
-          robocopy "$plexDataPath" "$localStagingPath" /MIR /XF *.log /XD Logs | Out-Null
+          robocopy "$resolvedPath" "$localStagingPath" /MIR /XF *.log /XD Logs | Out-Null
           
           # === DIAGNOSTIC CHECK 2: Check robocopy result and staging contents ===
           $RoboCopyExitCode = $LASTEXITCODE
-          Write-Host "INFO: Robocopy Exit Code was $RoboCopyExitCode."
+          Write-Log "INFO: Robocopy Exit Code was $RoboCopyExitCode."
 
           $StagingCount = (Get-ChildItem -Path $localStagingPath -Force | Measure-Object).Count
-          Write-Host "INFO: Staging folder contains $StagingCount items."
+          Write-Log "INFO: Staging folder contains $StagingCount items."
 
           if ($StagingCount -eq 0) {
-              Write-Host "CRITICAL ERROR: Staging folder is EMPTY after Robocopy. The likely cause is $plexDataPath resolving to a path with no Plex data."
+              Write-Log "CRITICAL ERROR: Staging folder is EMPTY after Robocopy. The path is almost certainly incorrect. Exiting."
               Restart-Services
               exit 1
           }
 
           # --- 3. Create ZIP from staging ---
-          Write-Host "Creating ZIP backup at $localBackupFile ..."
+          Write-Log "Creating ZIP backup at $localBackupFile ..."
           try {
               if (Test-Path $localBackupFile) { Remove-Item $localBackupFile -Force }
               Compress-Archive -Path "$localStagingPath\*" -DestinationPath $localBackupFile -Force
           }
           catch {
-              Write-Host "CRITICAL ERROR: Failed to compress ZIP. Error Details: $($_.Exception.Message)"
+              Write-Log "CRITICAL ERROR: Failed to compress ZIP. Error Details: $($_.Exception.Message)"
               Restart-Services
               exit 1
           }
 
           # --- 4. Clean staging folder ---
-          Write-Host "Cleaning up staging folder $localStagingPath..."
+          Write-Log "Cleaning up staging folder $localStagingPath..."
           Remove-Item "$localStagingPath\*" -Recurse -Force
 
           # --- 5. Restart Plex service ---
           Restart-Services
           
-          # --- 6. Map Network Drive with Specified Credentials ---
-          Write-Host "Attempting to map network drive ${mappedDriveLetter}: to ${finalNetworkShare} with specified credentials..."
-          
-          cmd.exe /c net use ${mappedDriveLetter}: /delete /y | Out-Null # Remove existing mapping silently
-          
+          # --- 6. Map Network Drive and Copy ---
+          # (Steps 6, 7, 8, 9 for network copy/cleanup remain the same, using Write-Log)
+          Write-Log "Attempting to map network drive ${mappedDriveLetter}: to ${finalNetworkShare}..."
+          cmd.exe /c net use ${mappedDriveLetter}: /delete /y | Out-Null
           cmd.exe /c net use ${mappedDriveLetter}: "${finalNetworkShare}" "${sharePassword}" /user:"${shareUsername}" /persistent:no
           
           if ($LASTEXITCODE -ne 0) {
-              Write-Host "CRITICAL ERROR: Failed to map network drive. Code $LASTEXITCODE. Check share credentials."
+              Write-Log "CRITICAL ERROR: Failed to map network drive. Code $LASTEXITCODE. Check share credentials. Exiting."
               Remove-Item $localBackupFile -Force -ErrorAction SilentlyContinue
               exit 1
           }
-          Write-Host "Network drive mapped successfully."
+          Write-Log "Network drive mapped successfully."
 
-          # --- 7. Copy Local ZIP to Mapped Drive ---
-          Write-Host "Copying local backup to network share: $finalBackupFile ..."
+          Write-Log "Copying local backup to network share..."
           try {
               Copy-Item -Path $localBackupFile -Destination $finalBackupFile -Force
           } catch {
-              Write-Host "CRITICAL ERROR: Failed to copy file to network share. $($_.Exception.Message)"
-              # Attempt unmap/cleanup before exit
+              Write-Log "CRITICAL ERROR: Failed to copy file to network share. $($_.Exception.Message)"
               cmd.exe /c net use ${mappedDriveLetter}: /delete /y | Out-Null
               Remove-Item $localBackupFile -Force -ErrorAction SilentlyContinue
               exit 1
           }
 
-          # --- 8. Cleanup (Network Share Retention) ---
-          Write-Host "Cleaning up old NETWORK backups, keeping only the last $maxBackups..."
-          $backups = Get-ChildItem -Path ${mappedDriveLetter}:\\ -Filter "Plex_Backup_*.zip" |
-                      Sort-Object LastWriteTime -Descending
-
+          Write-Log "Cleaning up old NETWORK backups, keeping only the last $maxBackups..."
+          $backups = Get-ChildItem -Path ${mappedDriveLetter}:\\ -Filter "Plex_Backup_*.zip" | Sort-Object LastWriteTime -Descending
           if ($backups.Count -gt $maxBackups) {
-              $toDelete = $backups | Select-Object -Skip $maxBackups
-              foreach ($file in $toDelete) {
-                  Write-Host "Deleting old network backup: $($file.FullName)"
-                  Remove-Item $file.FullName -Force
+              $backups | Select-Object -Skip $maxBackups | ForEach-Object {
+                  Write-Log "Deleting old network backup: $($_.FullName)"
+                  Remove-Item $_.FullName -Force
               }
           }
 
-          # --- 9. Final Cleanup (Local ZIP and Drive) ---
-          Write-Host "Removing local file $localBackupFile and unmapping drive ${mappedDriveLetter}: ..."
+          Write-Log "Removing local file $localBackupFile and unmapping drive ${mappedDriveLetter}: ..."
           Remove-Item $localBackupFile -Force -ErrorAction SilentlyContinue
           cmd.exe /c net use ${mappedDriveLetter}: /delete /y | Out-Null
           
-          Write-Host "Plex Backup and Transfer completed successfully!"
-      register: ps_output
+          Write-Log "Plex Backup and Transfer completed successfully!"
+      
+    - name: Retrieve diagnostic log file content (win_slurp)
+      ansible.windows.win_slurp:
+        src: "{{ diagnostic_log_path }}"
+      register: log_content
+      # Only run if the previous task (PowerShell) was successful (not failed)
+      when: not log_content.failed is defined or log_content.failed == false
+      ignore_errors: yes
 
-    - name: Display PowerShell script output for diagnostics
+    - name: Display diagnostic log content
       ansible.builtin.debug:
-        var: ps_output.stdout # CHANGED: Using stdout instead of stdout_lines
+        msg: "{{ log_content['content'] | b64decode }}"
+      when: log_content is defined and log_content.content is defined
+
+    - name: Clean up temporary diagnostic log file
+      ansible.windows.win_file:
+        path: "{{ diagnostic_log_path }}"
+        state: absent
+      ignore_errors: yes
