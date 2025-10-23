@@ -13,7 +13,7 @@
     plex_data_path: "C:\\Users\\kevireis\\AppData\\Local\\Plex Media Server" 
     local_backup_root: "C:\\Program Files (x86)\\Plex Service\\Backup"
     local_staging_path: "{{ local_backup_root }}\\Staging"
-    max_backups_to_keep: 10
+    max_backups_to_keep: 5
     
     # --- NETWORK SHARE CONFIGURATION (MUST BE POPULATED!) ---
     # NOTE: These values must be provided securely at runtime (e.g., via Ansible Vault)
