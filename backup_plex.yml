@@ -7,7 +7,8 @@
   vars:
     # --- PLEX & LOCAL CONFIGURATION ---
     plex_service_name: "PlexService"
-    # Note: $env:LOCALAPPDATA resolves to C:\Users\<User>\AppData\Local
+    # WARNING: This uses $env:LOCALAPPDATA, which resolves to the WinRM user's AppData path. 
+    # If the Plex data is stored under a different user's profile, this path will be empty.
     plex_data_path: "$env:LOCALAPPDATA\\Plex Media Server" 
     local_backup_root: "C:\\Program Files (x86)\\Plex Service\\Backup"
     local_staging_path: "{{ local_backup_root }}\\Staging"
@@ -41,7 +42,7 @@
         script: |
           # --- Configuration (Pulled from Ansible variables) ---
           $plexService = '{{ plex_service_name }}'
-          $plexDataPath = '{{ plex_data_path }}' # Using $env:LOCALAPPDATA here, resolves on remote host
+          $plexDataPath = '{{ plex_data_path }}' # Using $env:LOCALAPPDATA here
           $localStagingPath = '{{ local_staging_path }}'
           $localBackupFile = '{{ local_backup_file }}'
           $maxBackups = {{ max_backups_to_keep }}
@@ -64,12 +65,28 @@
           # Stop any residual Plex processes
           Get-Process -Name "Plex*" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           
+          # === DIAGNOSTIC CHECK 1: Verify the data source path ===
+          Write-Host "INFO: WinRM User is running this script. $plexDataPath resolves to:"
+          Write-Host (Resolve-Path "$plexDataPath" -ErrorAction SilentlyContinue)
+
           # --- 2. Copy Plex data (excluding Logs) to staging ---
           Write-Host "Copying Plex data from $plexDataPath to staging folder $localStagingPath..."
-          # Use robocopy with /MIR to mirror (delete old files) and exclude logs
           # Note: robocopy sets $LASTEXITCODE based on copy status, not just 0/1 for success/fail
           robocopy "$plexDataPath" "$localStagingPath" /MIR /XF *.log /XD Logs | Out-Null
           
+          # === DIAGNOSTIC CHECK 2: Check robocopy result and staging contents ===
+          $RoboCopyExitCode = $LASTEXITCODE
+          Write-Host "INFO: Robocopy Exit Code was $RoboCopyExitCode."
+
+          $StagingCount = (Get-ChildItem -Path $localStagingPath -Force | Measure-Object).Count
+          Write-Host "INFO: Staging folder contains $StagingCount items."
+
+          if ($StagingCount -eq 0) {
+              Write-Host "CRITICAL ERROR: Staging folder is EMPTY after Robocopy. The likely cause is $plexDataPath resolving to a path with no Plex data."
+              Restart-Services
+              exit 1
+          }
+
           # --- 3. Create ZIP from staging ---
           Write-Host "Creating ZIP backup at $localBackupFile ..."
           try {
@@ -135,3 +152,7 @@
           
           Write-Host "Plex Backup and Transfer completed successfully!"
       register: ps_output
+
+    - name: Display PowerShell script output for diagnostics
+      ansible.builtin.debug:
+        var: ps_output.stdout_lines
