@@ -7,9 +7,10 @@
   vars:
     # --- PLEX & LOCAL CONFIGURATION ---
     plex_service_name: "PlexService"
-    # WARNING: This uses $env:LOCALAPPDATA, which resolves to the WinRM user's AppData path. 
-    # If the Plex data is stored under a different user's profile, this path will be empty.
-    plex_data_path: "$env:LOCALAPPDATA\\Plex Media Server" 
+    # *** CORRECTED PATH ***
+    # Changed from $env:LOCALAPPDATA to $env:ProgramData, as Plex data is often stored here 
+    # when running as a service, resolving the WinRM user context issue.
+    plex_data_path: "$env:ProgramData\\Plex\\Plex Media Server" 
     local_backup_root: "C:\\Program Files (x86)\\Plex Service\\Backup"
     local_staging_path: "{{ local_backup_root }}\\Staging"
     max_backups_to_keep: 10
@@ -170,12 +171,9 @@
           Write-Host "--- END DIAGNOSTIC LOG CONTENT ---`n"
 
       register: ps_output
-      # Ensure Ansible registers failure correctly if the script exits with non-zero code.
-      # ignore_errors: yes # Removed this to allow proper failure detection
 
     - name: Display PowerShell log content (Captured via stdout)
       ansible.builtin.debug:
-        # Use the default filter to print stdout if available, or dump the whole variable if not (due to failure)
         msg: |
           {% if ps_output.stdout is defined %}
             {{ ps_output.stdout }}
@@ -185,9 +183,8 @@
             Below is the full output object which contains the error messages:
             {{ ps_output | to_nice_json }}
           {% endif %}
-      # Ignore the error on this task so the final cleanup task can still run.
       ignore_errors: true
-      when: ps_output is defined # Only run if the previous task created the ps_output variable
+      when: ps_output is defined
 
     - name: Clean up temporary diagnostic log file
       ansible.windows.win_file:
