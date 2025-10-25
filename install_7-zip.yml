@@ -1,0 +1,37 @@
+---
+- name: Install 7-Zip
+  hosts: windows_servers
+  gather_facts: no
+
+  vars:
+    app_name: "7-Zip 25.01 (x64)"
+    # Path to the installer file. Ensure this path exists on your file server!
+    # --- UPDATED PATH ---
+    installer_path: "\\\\kevireis-home\\i$\\Applications\\Utilities\\7-Zip\\v25.01\\Setup.msi" 
+    
+    # CRITICAL: This Product ID is for 7-Zip 25.01 x64.
+    # Ansible uses this to check the registry and ensure idempotency.
+    product_id: "{23170F69-40C1-2702-2501-000100000000}" 
+
+    # --- Added Share Credentials for UNC access (Set these via Ansible Vault or Semaphore Credential!) ---
+    share_username: ""
+    share_password: ""
+    # -----------------------------------------------------------------------------
+
+  tasks:
+    - name: Ensure 7-Zip is installed using win_package (MSI)
+      ansible.windows.win_package:
+        name: "{{ app_name }}"
+        path: "{{ installer_path }}"
+        product_id: "{{ product_id }}"
+        state: present
+        # Arguments for silent installation (standard for MSI)
+        arguments: /qn /norestart
+
+    - name: Display installation status
+      ansible.builtin.debug:
+        msg: "Installation task attempted for {{ app_name }}. Check host status for success/failure."
+
+# Note: For EXE installers, you would need to use the 'arguments' 
+# parameter for silent install specific to that EXE (e.g., /S or --silent)
+# and use the 'creates_path' parameter instead of 'product_id' if no PID is available.
