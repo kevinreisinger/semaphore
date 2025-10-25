@@ -1,0 +1,105 @@
+---
+- name: Install 7-Zip (MSI) on Windows Host via UNC Path (Idempotent)
+  hosts: windows # Target host group
+  gather_facts: no
+
+  # --------------------------------------------------------------------------
+  # 🎯 STEP 1: DEFINE APPLICATION-SPECIFIC VARIABLES (Based on successful run)
+  # --------------------------------------------------------------------------
+  vars:
+    app_name: "7-Zip 25.01 (x64)"
+    
+    # UNC File Path (Based on your successful configuration)
+    share_unc_root: "\\\\kevireis-home\\i$"
+    installer_relative_path: "Applications\\Utilities\\7-Zip\\v25.01\\Setup.msi" 
+    
+    # CRITICAL: Correct Product ID for idempotency check
+    product_id: "{23170F69-40C1-2702-2501-000100000000}" 
+
+    # Credentials (Must be provided securely via Semaphore/Vault)
+    share_username: ""
+    share_password: ""
+    
+    # Internal Path Variables (DO NOT CHANGE)
+    installer_source_unc: "{{ share_unc_root }}\\{{ installer_relative_path }}"
+    local_installer_path: 'C:\Windows\Temp\7zip_install.msi'
+  # --------------------------------------------------------------------------
+
+  tasks:
+    - name: "0.1. CHECK if {{ app_name }} is already installed"
+      ansible.windows.win_shell: |
+        $AppID = '{{ product_id }}'
+        # Check both 32-bit and 64-bit uninstall paths
+        $Installed = Get-ItemProperty -Path HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*, HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\* -ErrorAction SilentlyContinue |
+                     Where-Object {$_.PSChildName -eq $AppID}
+        
+        # Output JSON for Ansible to set the fact
+        if ($Installed) {
+            Write-Output '{"installed": true}'
+        } else {
+            Write-Output '{"installed": false}'
+        }
+      register: app_check_result
+      changed_when: false
+
+    - name: "0.2. Set fact: App installation status"
+      ansible.builtin.set_fact:
+        app_is_installed: "{{ (app_check_result.stdout | from_json).installed | default(false) }}"
+
+    - name: "1. ESTABLISH UNC Connection and COPY Installer to Local Temp Directory"
+      ansible.windows.win_shell: |
+        # Only runs if 7-Zip is NOT installed.
+        $uncPath = '{{ installer_source_unc }}'
+        $destPath = '{{ local_installer_path }}'
+        $shareUser = '{{ share_username }}'
+        $sharePass = '{{ share_password }}'
+        
+        # A. Establish UNC session (required for copy command to use credentials)
+        Write-Host "Establishing UNC session to: {{ share_unc_root }}"
+        cmd.exe /c "net use {{ share_unc_root }} $sharePass /user:$shareUser /persistent:no"
+        if ($LASTEXITCODE -ne 0) { Write-Error "Failed to establish UNC connection."; exit 1 }
+
+        # B. Copy the file using the full UNC path
+        Write-Host "Copying installer from $uncPath to $destPath"
+        cmd.exe /c "copy /Y $uncPath $destPath"
+        if ($LASTEXITCODE -ne 0) { 
+            Write-Error "Failed to copy file using UNC path."
+            cmd.exe /c "net use {{ share_unc_root }} /delete /y" | Out-Null 
+            exit 1
+        }
+        Write-Host "File copied successfully."
+      
+      no_log: true
+      register: copy_result
+      when: not app_is_installed # <<< Conditional Execution
+
+    - name: "2. INSTALL 7-Zip from Local Path"
+      ansible.windows.win_shell: |
+        Write-Host "Installing {{ app_name }} from LOCAL path: {{ local_installer_path }}"
+        msiexec.exe /i "{{ local_installer_path }}" /qn /norestart
+      register: install_result
+      changed_when: true
+      when: 
+        - copy_result is succeeded
+        - not app_is_installed # <<< Conditional Execution
+
+    - name: 3. CLEANUP local installer file
+      ansible.windows.win_file:
+        path: "{{ local_installer_path }}"
+        state: absent
+      when: not app_is_installed # <<< Conditional Execution
+
+    - name: 4. CLEANUP UNC connection
+      ansible.windows.win_shell: cmd.exe /c "net use {{ share_unc_root }} /delete /y"
+      ignore_errors: yes 
+      failed_when: false
+      when: not app_is_installed # <<< Conditional Execution
+      
+    - name: Display installation status
+      ansible.builtin.debug:
+        msg: >
+          {% if app_is_installed %}
+          ✅ SUCCESS: {{ app_name }} was already installed. Playbook reported changed=0.
+          {% else %}
+          ✅ SUCCESS: {{ app_name }} installation was attempted. Check if 'changed=1' reported success.
+          {% endif %}
