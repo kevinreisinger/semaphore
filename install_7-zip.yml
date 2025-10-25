@@ -10,8 +10,9 @@
     mapped_drive_letter: "Z" # CRITICAL: Drive letter (now without colon for New-PSDrive)
     share_unc_root: "\\\\kevireis-home\\i$"
     
-    # Path relative to the share root (used after mapping the Z: drive)
-    installer_relative_path: "Applications\\Utilities\\7-Zip\\v25.01\\Setup.msi" 
+    # Path relative to the share root (FIXED: Using forward slashes for better Ansible compatibility)
+    # Based on: Z:\Applications\Utilities\7-Zip\v25.01\Setup.msi
+    installer_relative_path: "Applications/Utilities/7-Zip/v25.01/Setup.msi" 
     
     # Full source path for win_copy, using the mapped drive letter
     installer_mapped_path: "{{ mapped_drive_letter }}:\\{{ installer_relative_path }}"
@@ -21,6 +22,10 @@
     
     # CRITICAL: Product ID for 7-Zip 25.01 (x64)
     product_id: "{23170F69-40C1-2702-2501-000100000000}" 
+
+    # --- DIAGNOSTIC PATH CHECK (Change this to test folders/files) ---
+    # Example: Z:\Applications\Utilities\7-Zip
+    diagnostic_test_path: "{{ mapped_drive_letter }}:\\Applications\\Utilities\\7-Zip\\v25.01"
 
     # --- REQUIRED: Set these via Semaphore Credential! ---
     share_username: ""
@@ -59,26 +64,14 @@
       register: auth_result
       # This task will now only succeed if the drive is mapped, otherwise it fails loudly.
 
-    - name: "1.5. Diagnostic: Check if Installer File Exists on Mapped Drive"
-      ansible.windows.win_stat:
-        path: "{{ installer_mapped_path }}"
-      register: file_stat
-      # Only run if authentication was successful
-      when: auth_result is succeeded
-
-    - name: "1.6. Diagnostic: Display File Existence Status"
-      ansible.builtin.debug:
-        msg: "File existence check for {{ installer_mapped_path }}: Found = {{ file_stat.stat.exists | default('Check Failed') }}"
-      when: file_stat is defined and auth_result is succeeded
-
     - name: "2. COPY 7-Zip Installer to Local Temp Directory (Using Mapped Drive Z:)"
       ansible.windows.win_copy:
         src: "{{ installer_mapped_path }}"
         dest: "{{ local_installer_path }}"
         remote_src: yes # The source path (Z:\...) exists on the remote machine
       register: copy_result
-      # Only run if authentication was successful AND the file exists
-      when: auth_result is succeeded and file_stat.stat.exists
+      # Only run if authentication was successful. The copy task will fail if the file isn't found.
+      when: auth_result is succeeded
 
     - name: "3. INSTALL 7-Zip from Local Path (with Idempotency Check)"
       ansible.windows.win_shell: |
@@ -112,9 +105,14 @@
       ignore_errors: yes 
       failed_when: false
       when: auth_result is succeeded
+      
+    - name: "6. Diagnostic: Check if Target Directory Exists (For troubleshooting path)"
+      ansible.windows.win_stat:
+        path: "{{ diagnostic_test_path }}"
+      register: dir_stat
+      when: auth_result is succeeded
 
-    - name: Display installation status
+    - name: "7. Diagnostic: Display Directory Existence Status"
       ansible.builtin.debug:
-        msg: "Installation task complete. Output: {{ install_result.stdout_lines | default('Installation status not captured, check host logs.') }}"
-      # Only show final success message if the install was attempted and succeeded.
-      when: install_result is defined and install_result is succeeded
+        msg: "Directory existence check for {{ diagnostic_test_path }}: Found = {{ dir_stat.stat.exists | default('Check Skipped') }}. If 'True', the issue is the file name itself (Setup.msi)."
+      when: dir_stat is defined and auth_result is succeeded and dir_stat is succeeded
