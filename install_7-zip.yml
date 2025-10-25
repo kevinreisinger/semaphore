@@ -7,13 +7,12 @@
     app_name: "7-Zip 25.01 (x64)"
     
     # --- UNC PATH CONFIGURATION ---
-    # The full path to the installer file on the network share
     installer_unc_path: "\\\\kevireis-home\\i$\\Applications\\Utilities\\7-Zip\\v25.01\\Setup.msi" 
-    
-    # The root of the network share (needed for the net use command)
     share_unc_root: "\\\\kevireis-home\\i$"
     
-    # CRITICAL: This Product ID is for 7-Zip 25.01 x64. Used for idempotency check.
+    # NEW: Local path on the target Windows machine
+    local_installer_path: 'C:\Windows\Temp\7zip_install.msi'
+    
     product_id: "{23170F69-40C1-2702-2501-000100000000}" 
 
     # --- REQUIRED: Set these via Semaphore Credential! ---
@@ -28,8 +27,14 @@
       no_log: true
       ignore_errors: yes 
 
-    - name: 2. INSTALL 7-Zip using MsiExec and UNC Path (with Idempotency Check)
-      # Executes the installer using direct msiexec.exe call for synchronous execution.
+    - name: 2. COPY 7-Zip Installer to Local Temp Directory
+      # Use win_copy, which can read the UNC path because Task 1 has authenticated the session.
+      ansible.windows.win_copy:
+        src: "{{ installer_unc_path }}"
+        dest: "{{ local_installer_path }}"
+
+    - name: 3. INSTALL 7-Zip from Local Path (with Idempotency Check)
+      # Executes the installer from the local disk, avoiding double-hop issues.
       ansible.windows.win_shell: |
         $AppID = '{{ product_id }}'
         # Check registry for the product ID
@@ -37,22 +42,26 @@
                      Where-Object {$_.PSChildName -eq $AppID}
         
         if (-not $Installed) {
-            Write-Host "Installing {{ app_name }} from UNC path: {{ installer_unc_path }}"
-            # FIX: Direct call to msiexec.exe is more reliable than Start-Process for silent installs over WinRM
-            # /i=install, /qn=quiet no UI, /norestart
-            msiexec.exe /i "{{ installer_unc_path }}" /qn /norestart
+            Write-Host "Installing {{ app_name }} from LOCAL path: {{ local_installer_path }}"
+            # Run msiexec directly from the local C:\Windows\Temp path
+            msiexec.exe /i "{{ local_installer_path }}" /qn /norestart
         } else {
             Write-Host "{{ app_name }} is already installed. Skipping installation."
         }
       register: install_result
-      # Register the task as 'changed' only if the installation path was executed
       changed_when: "'Installing' in install_result.stdout"
 
-    - name: 3. UN-AUTHENTICATE (Delete net use entry)
+    - name: 4. CLEANUP local installer file
+      # Remove the temporary installer from the target machine.
+      ansible.windows.win_file:
+        path: "{{ local_installer_path }}"
+        state: absent
+      ignore_errors: yes
+      
+    - name: 5. UN-AUTHENTICATE (Delete net use entry)
       # Attempts to delete the temporary connection, ignoring cleanup errors.
       ansible.windows.win_command: net use "{{ share_unc_root }}" /delete
       ignore_errors: yes 
-      # Suppress failure if Windows reports the non-persistent connection is already gone
       failed_when: false
 
     - name: Display installation status
