@@ -19,7 +19,7 @@
     # Local path on the target Windows machine for installation
     local_installer_path: 'C:\Windows\Temp\7zip_install.msi'
     
-    # CRITICAL: Product ID for 7-Zip 25.01 x64
+    # CRITICAL: Product ID for 7-Zip 25.01 (x64)
     product_id: "{23170F69-40C1-2702-2501-000100000000}" 
 
     # --- REQUIRED: Set these via Semaphore Credential! ---
@@ -29,12 +29,13 @@
 
   tasks:
     - name: 1. MAP UNC Path to Drive Letter (Z:) and Authenticate Session (PowerShell Native)
-      # FIX: Use New-PSDrive, which is robust, secure, and avoids shell quoting issues.
+      # FIX: Changed single quotes to double quotes around Jinja variables to resolve 
+      # the "unbalanced jinja2 block or quotes" parsing error.
       ansible.windows.win_shell: |
         # Create a Secure String for the password
-        $pass = ConvertTo-SecureString -String '{{ share_password }}' -AsPlainText -Force
+        $pass = ConvertTo-SecureString -String "{{ share_password }}" -AsPlainText -Force
         # Create a PSCredential object
-        $cred = New-Object System.Management.Automation.PSCredential '{{ share_username }}', $pass
+        $cred = New-Object System.Management.Automation.PSCredential "{{ share_username }}", $pass
         
         # Create the temporary mapped drive Z: (we skip persistence as it's temporary)
         New-PSDrive -Name "{{ mapped_drive_letter }}" -PSProvider FileSystem -Root "{{ share_unc_root }}" -Credential $cred -Scope Global -Force
@@ -93,3 +94,4 @@
     - name: Display installation status
       ansible.builtin.debug:
         msg: "Installation task complete. Output: {{ install_result.stdout_lines | default('Installation status not captured, check host logs.') }}"
+
