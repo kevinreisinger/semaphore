@@ -29,8 +29,9 @@
 
   tasks:
     - name: 1. MAP UNC Path to Drive Letter (Z:) and Authenticate Session
-      # FIX: Simplify net use command arguments and use double quotes for maximum shell compatibility.
-      ansible.windows.win_shell: 'net use "{{ mapped_drive_letter }}" "{{ share_unc_root }}" "{{ share_password }}" /user:"{{ share_username }}" /persistent:no /force'
+      # CRITICAL FIX: Adjusted quoting on the net use command to ensure robust parsing 
+      # of variables within the win_shell context, which was causing the "non-zero return code" failure.
+      ansible.windows.win_shell: "net use {{ mapped_drive_letter }} \"{{ share_unc_root }}\" \"{{ share_password }}\" /user:\"{{ share_username }}\" /persistent:no /force"
       no_log: true
       ignore_errors: yes 
       register: auth_result
