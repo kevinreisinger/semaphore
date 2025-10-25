@@ -1,22 +1,19 @@
 ---
-- name: Install 7-Zip (MSI) on Windows Host via Mapped Drive
+- name: Install 7-Zip (MSI) on Windows Host via UNC Path Authentication
   hosts: windows # Target host group
   gather_facts: no
 
   vars:
     app_name: "7-Zip 25.01 (x64)"
     
-    # --- UNC PATH BREAKDOWN ---
-    # The UNC path to the resource that needs to be mapped (the share root)
-    share_unc_path: "\\\\kevireis-home\\i$"
-    # The subdirectory and filename of the installer (relative to the share root)
-    installer_subpath: "Applications\\Utilities\\7-Zip\\v25.01\\Setup.msi"
-    # The drive letter to use for the temporary mapping
-    mapped_drive_letter: "Z:"
-    # The final path used by win_package
-    mapped_installer_path: "{{ mapped_drive_letter }}\\{{ installer_subpath }}"
+    # --- UNC PATH CONFIGURATION ---
+    # The full path to the installer file on the network share
+    installer_unc_path: "\\\\kevireis-home\\i$\\Applications\\Utilities\\7-Zip\\v25.01\\Setup.msi" 
     
-    # CRITICAL: This Product ID is for 7-Zip 25.01 x64.
+    # The root of the network share (needed for the net use command)
+    share_unc_root: "\\\\kevireis-home\\i$"
+    
+    # CRITICAL: This Product ID is for 7-Zip 25.01 x64. Used for idempotency check.
     product_id: "{23170F69-40C1-2702-2501-000100000000}" 
 
     # --- REQUIRED: Set these via Semaphore Credential! ---
@@ -25,27 +22,36 @@
     # ---------------------------------------------------
 
   tasks:
-    - name: 1. MAP Network Drive (Z:) using Share Credentials
+    - name: 1. AUTHENTICATE WinRM Session to UNC Path
       ansible.windows.win_shell: |
-        # Use net use to map the UNC path with specific, authorized credentials
-        net use {{ mapped_drive_letter }} "{{ share_unc_path }}" "{{ share_password }}" /user:"{{ share_username }}" /persistent:no /force
-      # no_log hides the password from the logs
-      no_log: true
-      # Ignore error if the drive is already mapped (we will try to clean it up later)
+        # This command forces the WinRM user's session to authenticate against the UNC path.
+        # This is a temporary, non-persistent authentication method.
+        net use "{{ share_unc_root }}" "{{ share_password }}" /user:"{{ share_username }}" /persistent:no /force
+      no_log: true # Keep credentials secure
       ignore_errors: yes 
 
-    - name: 2. Ensure 7-Zip is installed using win_package (MSI) from MAPPED PATH
-      ansible.windows.win_package:
-        # Reference the installer via the new mapped drive path (Z:\...)
-        path: "{{ mapped_installer_path }}"
-        product_id: "{{ product_id }}"
-        state: present
-        arguments: /qn /norestart
+    - name: 2. INSTALL 7-Zip using MsiExec and UNC Path (with Idempotency Check)
+      ansible.windows.win_shell: |
+        $AppID = '{{ product_id }}'
+        # Check registry for the product ID
+        $Installed = Get-ItemProperty -Path HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*, HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\* -ErrorAction SilentlyContinue |
+                     Where-Object {$_.PSChildName -eq $AppID}
+        
+        if (-not $Installed) {
+            Write-Host "Installing {{ app_name }} from UNC path: {{ installer_unc_path }}"
+            # Execute MSI installer natively: /i=install, /qn=quiet no UI, /norestart
+            Start-Process msiexec.exe -ArgumentList "/i `\"{{ installer_unc_path }}`\" /qn /norestart" -Wait
+        } else {
+            Write-Host "{{ app_name }} is already installed. Skipping installation."
+        }
+      register: install_result
+      # Register the task as 'changed' only if the installation path was executed
+      changed_when: "'Installing' in install_result.stdout"
 
-    - name: 3. UNMAP Network Drive (Z:)
-      ansible.windows.win_shell: net use {{ mapped_drive_letter }} /delete
-      ignore_errors: yes # Ignore errors if the drive was already deleted or never mapped
+    - name: 3. UN-AUTHENTICATE (Delete net use entry)
+      ansible.windows.win_shell: net use "{{ share_unc_root }}" /delete
+      ignore_errors: yes # Ignore if the entry wasn't created or is already gone
 
     - name: Display installation status
       ansible.builtin.debug:
-        msg: "Installation task complete. 7-Zip v25.01 should now be installed on {{ inventory_hostname }}."
+        msg: "Installation task complete. Output: {{ install_result.stdout_lines | default('Installation status not captured, check host logs.') }}"
