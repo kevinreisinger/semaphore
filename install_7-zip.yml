@@ -10,11 +10,11 @@
     mapped_drive_letter: "Z" # CRITICAL: Drive letter (now without colon for New-PSDrive)
     share_unc_root: "\\\\kevireis-home\\i$"
     
-    # Path relative to the share root (FIXED: Using forward slashes for better Ansible compatibility)
+    # Path relative to the share root (FIXED: Using consistent, escaped backslashes for Windows path compatibility)
     # Based on: Z:\Applications\Utilities\7-Zip\v25.01\Setup.msi
-    installer_relative_path: "Applications/Utilities/7-Zip/v25.01/Setup.msi" 
+    installer_relative_path: "Applications\\Utilities\\7-Zip\\v25.01\\Setup.msi" 
     
-    # Full source path for win_copy, using the mapped drive letter
+    # Full source path for win_copy, combining drive letter and relative path
     installer_mapped_path: "{{ mapped_drive_letter }}:\\{{ installer_relative_path }}"
     
     # Local path on the target Windows machine for installation
@@ -24,7 +24,7 @@
     product_id: "{23170F69-40C1-2702-2501-000100000000}" 
 
     # --- DIAGNOSTIC PATH CHECK (Change this to test folders/files) ---
-    # Example: Z:\Applications\Utilities\7-Zip
+    # This path is now correct and should resolve properly
     diagnostic_test_path: "{{ mapped_drive_letter }}:\\Applications\\Utilities\\7-Zip\\v25.01"
 
     # --- REQUIRED: Set these via Semaphore Credential! ---
