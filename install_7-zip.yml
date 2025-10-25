@@ -40,7 +40,7 @@
           # Create a PSCredential object
           $cred = New-Object System.Management.Automation.PSCredential $user, $pass
           
-          # FIX 1: Removed '-Force' which caused the "parameter cannot be found" error on older PS versions.
+          # Map the drive (The unsupported '-Force' parameter was removed from New-PSDrive in a previous step)
           Write-Host "Attempting to map {{ share_unc_root }} to {{ mapped_drive_letter }}:..."
           New-PSDrive -Name "{{ mapped_drive_letter }}" -PSProvider FileSystem -Root "{{ share_unc_root }}" -Credential $cred -Scope Global
           Write-Host "Drive mapped successfully."
@@ -56,9 +56,20 @@
         SHARE_PASS: "{{ share_password }}"
         
       no_log: true
-      # FIX 2: Removed temporary 'ignore_errors: yes' to ensure the playbook halts if auth fails.
       register: auth_result
       # This task will now only succeed if the drive is mapped, otherwise it fails loudly.
+
+    - name: 1.5. Diagnostic: Check if Installer File Exists on Mapped Drive
+      ansible.windows.win_stat:
+        path: "{{ installer_mapped_path }}"
+      register: file_stat
+      # Only run if authentication was successful
+      when: auth_result is succeeded
+
+    - name: 1.6. Diagnostic: Display File Existence Status
+      ansible.builtin.debug:
+        msg: "File existence check for {{ installer_mapped_path }}: Found = {{ file_stat.stat.exists | default('Check Failed') }}"
+      when: file_stat is defined and auth_result is succeeded
 
     - name: 2. COPY 7-Zip Installer to Local Temp Directory (Using Mapped Drive Z:)
       ansible.windows.win_copy:
@@ -66,9 +77,9 @@
         dest: "{{ local_installer_path }}"
         remote_src: yes # The source path (Z:\...) exists on the remote machine
       register: copy_result
-      # Only run if authentication was successful
-      when: auth_result is succeeded
-      
+      # Only run if authentication was successful AND the file exists
+      when: auth_result is succeeded and file_stat.stat.exists
+
     - name: 3. INSTALL 7-Zip from Local Path (with Idempotency Check)
       ansible.windows.win_shell: |
         $AppID = '{{ product_id }}'
@@ -84,7 +95,7 @@
         }
       register: install_result
       changed_when: "'Installing' in install_result.stdout"
-      # FIX 4: Only run if the COPY task succeeded.
+      # Only run if the COPY task succeeded.
       when: copy_result is succeeded
 
     - name: 4. CLEANUP local installer file
@@ -92,11 +103,11 @@
       ansible.windows.win_file:
         path: "{{ local_installer_path }}"
         state: absent
-      # FIX 4: Only clean up if the COPY task succeeded.
+      # Only clean up if the COPY task succeeded.
       when: copy_result is succeeded
 
     - name: 5. UN-AUTHENTICATE (Delete Mapped Drive Z:)
-      # FIX 5: Only attempt to remove the drive if Task 1 actually succeeded in creating it.
+      # Only attempt to remove the drive if Task 1 actually succeeded in creating it.
       ansible.windows.win_shell: Remove-PSDrive -Name "{{ mapped_drive_letter }}" -Force -ErrorAction SilentlyContinue
       ignore_errors: yes 
       failed_when: false
