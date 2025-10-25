@@ -1,6 +1,6 @@
 ---
 - name: Install 7-Zip
-  hosts: windows_servers
+  hosts: windows
   gather_facts: no
 
   vars:
