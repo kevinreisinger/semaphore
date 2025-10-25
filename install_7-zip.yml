@@ -29,7 +29,8 @@
       ignore_errors: yes 
       register: auth_result
 
-    - name: Diagnostic: Check Authentication Status
+    - name: "Diagnostic: Check Authentication Status"
+      # FIX: Quoted the name string to resolve the YAML parsing error.
       ansible.builtin.debug:
         msg: "Task 1 Auth Attempt Result: {{ auth_result.stdout_lines | default(auth_result.msg) }}"
       when: auth_result.rc != 0
