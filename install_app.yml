@@ -1,0 +1,93 @@
+---
+- name: TEMPLATE: Install Windows MSI Application from UNC Share
+  hosts: windows
+  gather_facts: no
+
+  # --------------------------------------------------------------------------
+  # 🎯 STEP 1: DEFINE APPLICATION-SPECIFIC VARIABLES
+  # --------------------------------------------------------------------------
+  vars:
+    # 1. Application Details
+    app_name: "My New Application (e.g., Adobe Reader)"
+    
+    # 2. UNC File Path (Use DOUBLE BACKSLASHES: \\)
+    share_unc_root: "\\\\yourserver\\sharename$"
+    installer_relative_path: "Software\\Path\\Installer.msi" 
+    
+    # CRITICAL: Find the Product ID in the registry after a manual install, 
+    # or use win_shell: msiexec /i "path" /qn /norestart /L*v C:\temp\install.log
+    product_id: "{PRODUCT-GUID-FOR-IDEMPOTENCY}" 
+
+    # 3. Credentials (Set via Semaphore/Ansible Vault for security)
+    share_username: ""
+    share_password: ""
+    
+    # 4. Internal Path Variables (DO NOT CHANGE)
+    installer_source_unc: "{{ share_unc_root }}\\{{ installer_relative_path }}"
+    local_installer_path: 'C:\Windows\Temp\installer_temp.msi'
+  # --------------------------------------------------------------------------
+
+  tasks:
+    - name: "1. ESTABLISH UNC Connection and COPY Installer to Local Temp Directory"
+      ansible.windows.win_shell: |
+        # This task uses 'net use' to authenticate against the UNC share, 
+        # then uses the native Windows 'copy' command to perform the file transfer.
+
+        $uncPath = '{{ installer_source_unc }}'
+        $destPath = '{{ local_installer_path }}'
+        $shareUser = '{{ share_username }}'
+        $sharePass = '{{ share_password }}'
+        
+        # A. Establish UNC session (required for copy command to use credentials)
+        Write-Host "Establishing UNC session to: {{ share_unc_root }}"
+        cmd.exe /c "net use {{ share_unc_root }} $sharePass /user:$shareUser /persistent:no"
+        if ($LASTEXITCODE -ne 0) { Write-Error "Failed to establish UNC connection."; exit 1 }
+
+        # B. Copy the file using the full UNC path
+        Write-Host "Copying installer from $uncPath to $destPath"
+        cmd.exe /c "copy /Y $uncPath $destPath"
+        if ($LASTEXITCODE -ne 0) { 
+            Write-Error "Failed to copy file using UNC path."
+            # Attempt to delete temporary session before failing
+            cmd.exe /c "net use {{ share_unc_root }} /delete /y" | Out-Null 
+            exit 1
+        }
+        Write-Host "File copied successfully."
+      
+      no_log: true
+      register: copy_result
+      
+    - name: "2. INSTALL Application from Local Path (with Idempotency Check)"
+      ansible.windows.win_shell: |
+        $AppID = '{{ product_id }}'
+        # Check both 32-bit and 64-bit uninstall paths
+        $Installed = Get-ItemProperty -Path HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*, HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\* -ErrorAction SilentlyContinue |
+                     Where-Object {$_.PSChildName -eq $AppID}
+        
+        if (-not $Installed) {
+            Write-Host "Installing {{ app_name }} from LOCAL path: {{ local_installer_path }}"
+            # Use /qn for silent install (no user interface)
+            msiexec.exe /i "{{ local_installer_path }}" /qn /norestart
+        } else {
+            Write-Host "{{ app_name }} is already installed. Skipping installation."
+        }
+      register: install_result
+      changed_when: "'Installing' in install_result.stdout"
+      when: copy_result is succeeded
+
+    - name: 3. CLEANUP local installer file
+      ansible.windows.win_file:
+        path: "{{ local_installer_path }}"
+        state: absent
+      when: copy_result is succeeded
+
+    - name: 4. CLEANUP UNC connection
+      ansible.windows.win_shell: cmd.exe /c "net use {{ share_unc_root }} /delete /y"
+      ignore_errors: yes 
+      failed_when: false
+      when: copy_result is succeeded
+      
+    - name: Display installation status
+      ansible.builtin.debug:
+        msg: "Installation status: {{ app_name }} installation was attempted and resulted in: {{ install_result.changed | default('N/A') }}"
+      when: install_result is defined
