@@ -29,7 +29,7 @@
 
   tasks:
     - name: 1. MAP UNC Path to Drive Letter (Z:) and Authenticate Session
-      # Map the share to Z: using credentials. This is more reliable than raw UNC path authentication.
+      # FIX: Simplify net use command arguments and use double quotes for maximum shell compatibility.
       ansible.windows.win_shell: 'net use "{{ mapped_drive_letter }}" "{{ share_unc_root }}" "{{ share_password }}" /user:"{{ share_username }}" /persistent:no /force'
       no_log: true
       ignore_errors: yes 
