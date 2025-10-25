@@ -23,22 +23,27 @@
 
   tasks:
     - name: 1. AUTHENTICATE WinRM Session to UNC Path
-      # Authenticate the WinRM session against the UNC path using explicit credentials.
-      ansible.windows.win_command: 'net use "{{ share_unc_root }}" "{{ share_password }}" /user:"{{ share_username }}" /persistent:no /force'
+      # Authenticate the WinRM session against the UNC path using explicit credentials using win_shell for better session management.
+      ansible.windows.win_shell: 'net use "{{ share_unc_root }}" "{{ share_password }}" /user:"{{ share_username }}" /persistent:no /force'
       no_log: true
       ignore_errors: yes 
       register: auth_result
 
-    - name: 2. COPY 7-Zip Installer to Local Temp Directory (Using PowerShell Copy-Item)
-      # FIX: Use Copy-Item in win_shell. This ensures the copy operation runs in the 
-      # authenticated shell session established in Task 1, resolving "Access is denied."
-      ansible.windows.win_shell: |
-        # Use Copy-Item to copy from the authenticated UNC path to the local temp directory.
-        Copy-Item -Path '{{ installer_unc_path }}' -Destination '{{ local_installer_path }}' -Force
+    - name: Diagnostic: Check Authentication Status
+      ansible.builtin.debug:
+        msg: "Task 1 Auth Attempt Result: {{ auth_result.stdout_lines | default(auth_result.msg) }}"
+      when: auth_result.rc != 0
+
+    - name: 2. COPY 7-Zip Installer to Local Temp Directory (Using win_copy with remote_src)
+      # Relying on the temporary credential created in Task 1.
+      ansible.windows.win_copy:
+        src: "{{ installer_unc_path }}"
+        dest: "{{ local_installer_path }}"
+        remote_src: yes
       register: copy_result
       # Only run if authentication was attempted/successful
       when: auth_result is not skipped
-
+      
     - name: 3. INSTALL 7-Zip from Local Path (with Idempotency Check)
       # Executes the installer from the local disk, avoiding all UNC/double-hop issues during install.
       ansible.windows.win_shell: |
@@ -56,6 +61,7 @@
         }
       register: install_result
       changed_when: "'Installing' in install_result.stdout"
+      when: copy_result is succeeded
 
     - name: 4. CLEANUP local installer file
       # Remove the temporary installer from the target machine.
