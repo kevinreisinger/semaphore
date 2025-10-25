@@ -7,14 +7,14 @@
     app_name: "7-Zip 25.01 (x64)"
     
     # --- UNC PATH CONFIGURATION ---
-    mapped_drive_letter: "Z:" # CRITICAL: Drive letter on target host for temporary mapping
+    mapped_drive_letter: "Z" # CRITICAL: Drive letter (now without colon for New-PSDrive)
     share_unc_root: "\\\\kevireis-home\\i$"
     
     # Path relative to the share root (used after mapping the Z: drive)
     installer_relative_path: "Applications\\Utilities\\7-Zip\\v25.01\\Setup.msi" 
     
     # Full source path for win_copy, using the mapped drive letter
-    installer_mapped_path: "{{ mapped_drive_letter }}\\{{ installer_relative_path }}"
+    installer_mapped_path: "{{ mapped_drive_letter }}:\\{{ installer_relative_path }}"
     
     # Local path on the target Windows machine for installation
     local_installer_path: 'C:\Windows\Temp\7zip_install.msi'
@@ -28,17 +28,23 @@
     # ---------------------------------------------------
 
   tasks:
-    - name: 1. MAP UNC Path to Drive Letter (Z:) and Authenticate Session
-      # CRITICAL FIX: Adjusted quoting on the net use command to ensure robust parsing 
-      # of variables within the win_shell context, which was causing the "non-zero return code" failure.
-      ansible.windows.win_shell: "net use {{ mapped_drive_letter }} \"{{ share_unc_root }}\" \"{{ share_password }}\" /user:\"{{ share_username }}\" /persistent:no /force"
+    - name: 1. MAP UNC Path to Drive Letter (Z:) and Authenticate Session (PowerShell Native)
+      # FIX: Use New-PSDrive, which is robust, secure, and avoids shell quoting issues.
+      ansible.windows.win_shell: |
+        # Create a Secure String for the password
+        $pass = ConvertTo-SecureString -String '{{ share_password }}' -AsPlainText -Force
+        # Create a PSCredential object
+        $cred = New-Object System.Management.Automation.PSCredential '{{ share_username }}', $pass
+        
+        # Create the temporary mapped drive Z: (we skip persistence as it's temporary)
+        New-PSDrive -Name "{{ mapped_drive_letter }}" -PSProvider FileSystem -Root "{{ share_unc_root }}" -Credential $cred -Scope Global -Force
       no_log: true
       ignore_errors: yes 
       register: auth_result
 
     - name: "Diagnostic: Check Authentication Status"
       ansible.builtin.debug:
-        msg: "Task 1 Auth Attempt Result: {{ auth_result.stdout_lines | default(auth_result.msg) }}"
+        msg: "Task 1 Auth Attempt RC: {{ auth_result.rc }}. Output: {{ auth_result.stdout_lines | default(auth_result.msg) }}"
       when: auth_result.rc != 0
 
     - name: 2. COPY 7-Zip Installer to Local Temp Directory (Using Mapped Drive Z:)
@@ -79,8 +85,8 @@
       when: copy_result is succeeded
 
     - name: 5. UN-AUTHENTICATE (Delete Mapped Drive Z:)
-      # Deletes the temporary mapped drive, ignoring cleanup errors.
-      ansible.windows.win_command: net use "{{ mapped_drive_letter }}" /delete
+      # FIX: Use Remove-PSDrive for native cleanup, ignoring errors.
+      ansible.windows.win_shell: Remove-PSDrive -Name "{{ mapped_drive_letter }}" -Force -ErrorAction SilentlyContinue
       ignore_errors: yes 
       failed_when: false
 
