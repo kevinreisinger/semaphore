@@ -1,5 +1,5 @@
 ---
-- name: Install 7-Zip (MSI) on Windows Host via Mapped Drive
+- name: Install 7-Zip (MSI) on Windows Host via UNC Path
   hosts: windows # Target host group
   gather_facts: no
 
@@ -7,15 +7,12 @@
     app_name: "7-Zip 25.01 (x64)"
     
     # --- UNC PATH CONFIGURATION ---
-    mapped_drive_letter: "Z" # CRITICAL: Drive letter (now without colon for New-PSDrive)
     share_unc_root: "\\\\kevireis-home\\i$"
-    
-    # Path relative to the share root (FIXED: Using consistent, escaped backslashes for Windows path compatibility)
-    # Based on: Z:\Applications\Utilities\7-Zip\v25.01\Setup.msi
+    # Path relative to the share root 
     installer_relative_path: "Applications\\Utilities\\7-Zip\\v25.01\\Setup.msi" 
     
-    # Full source path for win_copy, combining drive letter and relative path
-    installer_mapped_path: "{{ mapped_drive_letter }}:\\{{ installer_relative_path }}"
+    # FINAL UNC PATH TO THE INSTALLER (Using the UNC format that the copy command expects)
+    installer_source_unc: "{{ share_unc_root }}\\{{ installer_relative_path }}"
     
     # Local path on the target Windows machine for installation
     local_installer_path: 'C:\Windows\Temp\7zip_install.msi'
@@ -23,57 +20,51 @@
     # CRITICAL: Product ID for 7-Zip 25.01 (x64)
     product_id: "{23170F69-40C1-2702-2501-000100000000}" 
 
-    # --- DIAGNOSTIC PATH CHECK (Change this to test folders/files) ---
-    # This path is now correct and should resolve properly
-    diagnostic_test_path: "{{ mapped_drive_letter }}:\\Applications\\Utilities\\7-Zip\\v25.01"
-
     # --- REQUIRED: Set these via Semaphore Credential! ---
     share_username: ""
     share_password: ""
     # ---------------------------------------------------
 
   tasks:
-    - name: "1. MAP UNC Path to Drive Letter (Z:) and Authenticate Session (PowerShell Native)"
+    - name: "1. ESTABLISH UNC Connection and COPY Installer to Local Temp Directory"
       ansible.windows.win_shell: |
-        try {
-          # Read credentials securely passed from the environment
-          $user = $env:SHARE_USER
-          $pass_string = $env:SHARE_PASS
-          
-          # Create a Secure String for the password
-          $pass = ConvertTo-SecureString -String $pass_string -AsPlainText -Force
-          # Create a PSCredential object
-          $cred = New-Object System.Management.Automation.PSCredential $user, $pass
-          
-          # Map the drive 
-          Write-Host "Attempting to map {{ share_unc_root }} to {{ mapped_drive_letter }}:..."
-          New-PSDrive -Name "{{ mapped_drive_letter }}" -PSProvider FileSystem -Root "{{ share_unc_root }}" -Credential $cred -Scope Global
-          Write-Host "Drive mapped successfully."
-        }
-        catch {
-          # Capture the specific error and write it to the error stream (stderr)
-          Write-Error "Failed to map network drive. ERROR: $($_.Exception.Message)"
-          exit 1 # Ensure Ansible sees the failure
-        }
-      
-      environment:
-        SHARE_USER: "{{ share_username }}"
-        SHARE_PASS: "{{ share_password }}"
+        # Since win_copy cannot use credentials, we use 'net use' to establish a session,
+        # then the native 'copy' command to move the file using the full UNC path.
+
+        $uncPath = '{{ installer_source_unc }}'
+        $destPath = '{{ local_installer_path }}'
+        $shareUser = '{{ share_username }}'
+        $sharePass = '{{ share_password }}'
         
+        # 1. Temporarily establish a connection to the share using the provided credentials
+        # This is CRITICAL for the subsequent 'copy' command to work over the network.
+        Write-Host "Establishing UNC session to: {{ share_unc_root }}"
+        cmd.exe /c "net use {{ share_unc_root }} $sharePass /user:$shareUser /persistent:no"
+        
+        # Check if the connection succeeded before attempting copy
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Failed to establish UNC connection. Check credentials or share availability."
+            exit 1
+        }
+
+        # 2. Copy the file using the full UNC path to the local temporary location
+        Write-Host "Copying installer from $uncPath to $destPath"
+        cmd.exe /c "copy /Y $uncPath $destPath"
+        
+        # Check if the copy operation succeeded
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Failed to copy file using UNC path."
+            exit 1
+        }
+        
+        Write-Host "File copied successfully."
+        # The 'net use' session created here is typically ephemeral and may not need explicit deletion.
+        # However, to be clean, we ensure it's removed in the final cleanup task.
+      
       no_log: true
-      register: auth_result
-      # This task will now only succeed if the drive is mapped, otherwise it fails loudly.
-
-    - name: "2. COPY 7-Zip Installer to Local Temp Directory (Using Mapped Drive Z:)"
-      ansible.windows.win_copy:
-        src: "{{ installer_mapped_path }}"
-        dest: "{{ local_installer_path }}"
-        remote_src: yes # The source path (Z:\...) exists on the remote machine
       register: copy_result
-      # Only run if authentication was successful. The copy task will fail if the file isn't found.
-      when: auth_result is succeeded
-
-    - name: "3. INSTALL 7-Zip from Local Path (with Idempotency Check)"
+      
+    - name: "2. INSTALL 7-Zip from Local Path (with Idempotency Check)"
       ansible.windows.win_shell: |
         $AppID = '{{ product_id }}'
         $Installed = Get-ItemProperty -Path HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*, HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\* -ErrorAction SilentlyContinue |
@@ -91,7 +82,7 @@
       # Only run if the COPY task succeeded.
       when: copy_result is succeeded
 
-    - name: 4. CLEANUP local installer file
+    - name: 3. CLEANUP local installer file
       # Remove the temporary installer from the target machine.
       ansible.windows.win_file:
         path: "{{ local_installer_path }}"
@@ -99,20 +90,15 @@
       # Only clean up if the COPY task succeeded.
       when: copy_result is succeeded
 
-    - name: 5. UN-AUTHENTICATE (Delete Mapped Drive Z:)
-      # Only attempt to remove the drive if Task 1 actually succeeded in creating it.
-      ansible.windows.win_shell: Remove-PSDrive -Name "{{ mapped_drive_letter }}" -Force -ErrorAction SilentlyContinue
+    - name: 4. CLEANUP UNC connection (Just in case 'net use' persisted it)
+      # Attempt to remove the UNC session if it was established. Ignore errors.
+      ansible.windows.win_shell: cmd.exe /c "net use {{ share_unc_root }} /delete /y"
       ignore_errors: yes 
       failed_when: false
-      when: auth_result is succeeded
+      when: copy_result is succeeded
       
-    - name: "6. Diagnostic: Check if Target Directory Exists (For troubleshooting path)"
-      ansible.windows.win_stat:
-        path: "{{ diagnostic_test_path }}"
-      register: dir_stat
-      when: auth_result is succeeded
-
-    - name: "7. Diagnostic: Display Directory Existence Status"
+    - name: Display installation status
       ansible.builtin.debug:
-        msg: "Directory existence check for {{ diagnostic_test_path }}: Found = {{ dir_stat.stat.exists | default('Check Skipped') }}. If 'True', the issue is the file name itself (Setup.msi)."
-      when: dir_stat is defined and auth_result is succeeded and dir_stat is succeeded
+        msg: "Installation status (changed=False means already installed or skipped): {{ install_result.changed | default('N/A') }}"
+      # Only show final status if the install task was attempted.
+      when: install_result is defined
