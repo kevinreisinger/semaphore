@@ -24,9 +24,10 @@
   tasks:
     - name: 1. AUTHENTICATE WinRM Session to UNC Path
       ansible.windows.win_shell: |
+        # IMPORTANT: Use the /savecred flag and the net use command is wrapped in a PowerShell script block.
         # This command forces the WinRM user's session to authenticate against the UNC path.
-        # This is a temporary, non-persistent authentication method.
-        net use "{{ share_unc_root }}" "{{ share_password }}" /user:"{{ share_username }}" /persistent:no /force
+        $cmd = "net use ""{{ share_unc_root }}"" ""{{ share_password }}"" /user:""{{ share_username }}"" /persistent:no /force"
+        Invoke-Expression $cmd
       no_log: true # Keep credentials secure
       ignore_errors: yes 
 
@@ -49,6 +50,7 @@
       changed_when: "'Installing' in install_result.stdout"
 
     - name: 3. UN-AUTHENTICATE (Delete net use entry)
+      # This still needs to be run in a shell environment
       ansible.windows.win_shell: net use "{{ share_unc_root }}" /delete
       ignore_errors: yes # Ignore if the entry wasn't created or is already gone
 
