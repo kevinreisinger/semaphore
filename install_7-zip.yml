@@ -13,6 +13,7 @@
     # NEW: Local path on the target Windows machine
     local_installer_path: 'C:\Windows\Temp\7zip_install.msi'
     
+    # CRITICAL: Product ID for 7-Zip 25.01 x64
     product_id: "{23170F69-40C1-2702-2501-000100000000}" 
 
     # --- REQUIRED: Set these via Semaphore Credential! ---
@@ -28,11 +29,13 @@
       ignore_errors: yes 
 
     - name: 2. COPY 7-Zip Installer to Local Temp Directory
-      # Use win_copy, which can read the UNC path because Task 1 has authenticated the session.
+      # FIX: remote_src: yes tells the target Windows host to fetch the file from the UNC path
       ansible.windows.win_copy:
         src: "{{ installer_unc_path }}"
         dest: "{{ local_installer_path }}"
-
+        remote_src: yes
+      register: copy_result
+      
     - name: 3. INSTALL 7-Zip from Local Path (with Idempotency Check)
       # Executes the installer from the local disk, avoiding double-hop issues.
       ansible.windows.win_shell: |
@@ -56,8 +59,9 @@
       ansible.windows.win_file:
         path: "{{ local_installer_path }}"
         state: absent
-      ignore_errors: yes
-      
+      # Only attempt cleanup if the copy succeeded
+      when: copy_result.changed is defined and copy_result.changed
+
     - name: 5. UN-AUTHENTICATE (Delete net use entry)
       # Attempts to delete the temporary connection, ignoring cleanup errors.
       ansible.windows.win_command: net use "{{ share_unc_root }}" /delete
