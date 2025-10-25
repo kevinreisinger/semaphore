@@ -23,15 +23,13 @@
 
   tasks:
     - name: 1. AUTHENTICATE WinRM Session to UNC Path
-      ansible.windows.win_shell: |
-        # IMPORTANT: Use the /savecred flag and the net use command is wrapped in a PowerShell script block.
-        # This command forces the WinRM user's session to authenticate against the UNC path.
-        $cmd = "net use ""{{ share_unc_root }}"" ""{{ share_password }}"" /user:""{{ share_username }}"" /persistent:no /force"
-        Invoke-Expression $cmd
+      # Using win_command to bypass PowerShell parser issues for the simple net use command.
+      ansible.windows.win_command: 'net use "{{ share_unc_root }}" "{{ share_password }}" /user:"{{ share_username }}" /persistent:no /force'
       no_log: true # Keep credentials secure
       ignore_errors: yes 
 
     - name: 2. INSTALL 7-Zip using MsiExec and UNC Path (with Idempotency Check)
+      # win_shell is still required here for the PowerShell logic (if/else and registry check).
       ansible.windows.win_shell: |
         $AppID = '{{ product_id }}'
         # Check registry for the product ID
@@ -41,6 +39,7 @@
         if (-not $Installed) {
             Write-Host "Installing {{ app_name }} from UNC path: {{ installer_unc_path }}"
             # Execute MSI installer natively: /i=install, /qn=quiet no UI, /norestart
+            # Use Start-Process msiexec.exe to ensure proper path handling.
             Start-Process msiexec.exe -ArgumentList "/i `\"{{ installer_unc_path }}`\" /qn /norestart" -Wait
         } else {
             Write-Host "{{ app_name }} is already installed. Skipping installation."
@@ -50,8 +49,7 @@
       changed_when: "'Installing' in install_result.stdout"
 
     - name: 3. UN-AUTHENTICATE (Delete net use entry)
-      # This still needs to be run in a shell environment
-      ansible.windows.win_shell: net use "{{ share_unc_root }}" /delete
+      ansible.windows.win_command: net use "{{ share_unc_root }}" /delete
       ignore_errors: yes # Ignore if the entry wasn't created or is already gone
 
     - name: Display installation status
