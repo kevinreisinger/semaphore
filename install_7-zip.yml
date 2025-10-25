@@ -11,7 +11,7 @@
     # Path relative to the share root 
     installer_relative_path: "Applications\\Utilities\\7-Zip\\v25.01\\Setup.msi" 
     
-    # FINAL UNC PATH TO THE INSTALLER (Using the UNC format that the copy command expects)
+    # FINAL UNC PATH TO THE INSTALLER 
     installer_source_unc: "{{ share_unc_root }}\\{{ installer_relative_path }}"
     
     # Local path on the target Windows machine for installation
@@ -31,6 +31,7 @@
         # Since win_copy cannot use credentials, we use 'net use' to establish a session,
         # then the native 'copy' command to move the file using the full UNC path.
 
+        # NOTE: Variables are passed directly as Jinja templates to avoid YAML parsing errors.
         $uncPath = '{{ installer_source_unc }}'
         $destPath = '{{ local_installer_path }}'
         $shareUser = '{{ share_username }}'
@@ -38,6 +39,7 @@
         
         # 1. Temporarily establish a connection to the share using the provided credentials
         # This is CRITICAL for the subsequent 'copy' command to work over the network.
+        # We must use cmd.exe to execute net use for reliable credential passing.
         Write-Host "Establishing UNC session to: {{ share_unc_root }}"
         cmd.exe /c "net use {{ share_unc_root }} $sharePass /user:$shareUser /persistent:no"
         
@@ -48,18 +50,19 @@
         }
 
         # 2. Copy the file using the full UNC path to the local temporary location
+        # The UNC path variable ($uncPath) is already quoted correctly for cmd.exe copy.
         Write-Host "Copying installer from $uncPath to $destPath"
         cmd.exe /c "copy /Y $uncPath $destPath"
         
         # Check if the copy operation succeeded
         if ($LASTEXITCODE -ne 0) {
             Write-Error "Failed to copy file using UNC path."
+            # Attempt to delete the temporary UNC session before failing
+            cmd.exe /c "net use {{ share_unc_root }} /delete /y" | Out-Null 
             exit 1
         }
         
         Write-Host "File copied successfully."
-        # The 'net use' session created here is typically ephemeral and may not need explicit deletion.
-        # However, to be clean, we ensure it's removed in the final cleanup task.
       
       no_log: true
       register: copy_result
