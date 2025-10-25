@@ -29,19 +29,28 @@
 
   tasks:
     - name: 1. MAP UNC Path to Drive Letter (Z:) and Authenticate Session (PowerShell Native)
-      # FINAL FIX: Pass sensitive variables via 'environment' to avoid YAML/Jinja parsing errors.
+      # FIX: Added try...catch block to capture the real error and removed 'ignore_errors: yes'.
       ansible.windows.win_shell: |
-        # Read credentials securely passed from the environment
-        $user = $env:SHARE_USER
-        $pass_string = $env:SHARE_PASS
-        
-        # Create a Secure String for the password
-        $pass = ConvertTo-SecureString -String $pass_string -AsPlainText -Force
-        # Create a PSCredential object
-        $cred = New-Object System.Management.Automation.PSCredential $user, $pass
-        
-        # Create the temporary mapped drive Z:
-        New-PSDrive -Name "{{ mapped_drive_letter }}" -PSProvider FileSystem -Root "{{ share_unc_root }}" -Credential $cred -Scope Global -Force
+        try {
+          # Read credentials securely passed from the environment
+          $user = $env:SHARE_USER
+          $pass_string = $env:SHARE_PASS
+          
+          # Create a Secure String for the password
+          $pass = ConvertTo-SecureString -String $pass_string -AsPlainText -Force
+          # Create a PSCredential object
+          $cred = New-Object System.Management.Automation.PSCredential $user, $pass
+          
+          # Create the temporary mapped drive Z:
+          Write-Host "Attempting to map {{ share_unc_root }} to {{ mapped_drive_letter }}:..."
+          New-PSDrive -Name "{{ mapped_drive_letter }}" -PSProvider FileSystem -Root "{{ share_unc_root }}" -Credential $cred -Scope Global -Force
+          Write-Host "Drive mapped successfully."
+        }
+        catch {
+          # Catch the specific error and write it to the error stream
+          Write-Error "Failed to map network drive. ERROR: $($_.Exception.Message)"
+          exit 1 # Ensure Ansible sees the failure
+        }
       
       # Inject variables as environment variables for the shell
       environment:
@@ -49,35 +58,26 @@
         SHARE_PASS: "{{ share_password }}"
         
       no_log: true
-      ignore_errors: yes 
+      # ignore_errors: yes  <-- REMOVED. We want this to fail loudly.
       register: auth_result
 
-    - name: "Diagnostic: Check Authentication Status"
-      ansible.builtin.debug:
-        msg: "Task 1 Auth Attempt RC: {{ auth_result.rc }}. Output: {{ auth_result.stdout_lines | default(auth_result.msg) }}"
-      when: auth_result.rc != 0
-
     - name: 2. COPY 7-Zip Installer to Local Temp Directory (Using Mapped Drive Z:)
-      # Now copying from the local Z: drive, which solves the delegation/double-hop issue.
       ansible.windows.win_copy:
         src: "{{ installer_mapped_path }}"
         dest: "{{ local_installer_path }}"
         remote_src: yes # The source path (Z:\...) exists on the remote machine
       register: copy_result
-      # Only run if authentication was attempted/successful
-      when: auth_result is not skipped
+      # Only run if authentication was successful
+      when: auth_result is succeeded
       
     - name: 3. INSTALL 7-Zip from Local Path (with Idempotency Check)
-      # Executes the installer from the local disk.
       ansible.windows.win_shell: |
         $AppID = '{{ product_id }}'
-        # Check registry for the product ID
         $Installed = Get-ItemProperty -Path HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*, HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\* -ErrorAction SilentlyContinue |
                      Where-Object {$_.PSChildName -eq $AppID}
         
         if (-not $Installed) {
             Write-Host "Installing {{ app_name }} from LOCAL path: {{ local_installer_path }}"
-            # Run msiexec directly from the local C:\Windows\Temp path
             msiexec.exe /i "{{ local_installer_path }}" /qn /norestart
         } else {
             Write-Host "{{ app_name }} is already installed. Skipping installation."
@@ -87,20 +87,20 @@
       when: copy_result is succeeded
 
     - name: 4. CLEANUP local installer file
-      # Remove the temporary installer from the target machine.
       ansible.windows.win_file:
         path: "{{ local_installer_path }}"
         state: absent
-      # Only clean up if the copy task succeeded.
       when: copy_result is succeeded
 
     - name: 5. UN-AUTHENTICATE (Delete Mapped Drive Z:)
-      # FIX: Use Remove-PSDrive for native cleanup, ignoring errors.
       ansible.windows.win_shell: Remove-PSDrive -Name "{{ mapped_drive_letter }}" -Force -ErrorAction SilentlyContinue
       ignore_errors: yes 
       failed_when: false
+      # Always run this cleanup if the auth task was at least attempted
+      when: auth_result is defined
 
     - name: Display installation status
       ansible.builtin.debug:
         msg: "Installation task complete. Output: {{ install_result.stdout_lines | default('Installation status not captured, check host logs.') }}"
+      when: install_result is succeeded
 
