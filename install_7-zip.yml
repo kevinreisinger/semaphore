@@ -1,5 +1,5 @@
 ---
-- name: Install 7-Zip (MSI) on Windows Host via UNC Path Authentication
+- name: Install 7-Zip (MSI) on Windows Host via Mapped Drive
   hosts: windows # Target host group
   gather_facts: no
 
@@ -7,10 +7,16 @@
     app_name: "7-Zip 25.01 (x64)"
     
     # --- UNC PATH CONFIGURATION ---
-    installer_unc_path: "\\\\kevireis-home\\i$\\Applications\\Utilities\\7-Zip\\v25.01\\Setup.msi" 
+    mapped_drive_letter: "Z:" # CRITICAL: Drive letter on target host for temporary mapping
     share_unc_root: "\\\\kevireis-home\\i$"
     
-    # NEW: Local path on the target Windows machine
+    # Path relative to the share root (used after mapping the Z: drive)
+    installer_relative_path: "Applications\\Utilities\\7-Zip\\v25.01\\Setup.msi" 
+    
+    # Full source path for win_copy, using the mapped drive letter
+    installer_mapped_path: "{{ mapped_drive_letter }}\\{{ installer_relative_path }}"
+    
+    # Local path on the target Windows machine for installation
     local_installer_path: 'C:\Windows\Temp\7zip_install.msi'
     
     # CRITICAL: Product ID for 7-Zip 25.01 x64
@@ -22,31 +28,30 @@
     # ---------------------------------------------------
 
   tasks:
-    - name: 1. AUTHENTICATE WinRM Session to UNC Path
-      # Authenticate the WinRM session against the UNC path using explicit credentials using win_shell for better session management.
-      ansible.windows.win_shell: 'net use "{{ share_unc_root }}" "{{ share_password }}" /user:"{{ share_username }}" /persistent:no /force'
+    - name: 1. MAP UNC Path to Drive Letter (Z:) and Authenticate Session
+      # Map the share to Z: using credentials. This is more reliable than raw UNC path authentication.
+      ansible.windows.win_shell: 'net use "{{ mapped_drive_letter }}" "{{ share_unc_root }}" "{{ share_password }}" /user:"{{ share_username }}" /persistent:no /force'
       no_log: true
       ignore_errors: yes 
       register: auth_result
 
     - name: "Diagnostic: Check Authentication Status"
-      # FIX: Quoted the name string to resolve the YAML parsing error.
       ansible.builtin.debug:
         msg: "Task 1 Auth Attempt Result: {{ auth_result.stdout_lines | default(auth_result.msg) }}"
       when: auth_result.rc != 0
 
-    - name: 2. COPY 7-Zip Installer to Local Temp Directory (Using win_copy with remote_src)
-      # Relying on the temporary credential created in Task 1.
+    - name: 2. COPY 7-Zip Installer to Local Temp Directory (Using Mapped Drive Z:)
+      # Now copying from the local Z: drive, which solves the delegation/double-hop issue.
       ansible.windows.win_copy:
-        src: "{{ installer_unc_path }}"
+        src: "{{ installer_mapped_path }}"
         dest: "{{ local_installer_path }}"
-        remote_src: yes
+        remote_src: yes # The source path (Z:\...) exists on the remote machine
       register: copy_result
       # Only run if authentication was attempted/successful
       when: auth_result is not skipped
       
     - name: 3. INSTALL 7-Zip from Local Path (with Idempotency Check)
-      # Executes the installer from the local disk, avoiding all UNC/double-hop issues during install.
+      # Executes the installer from the local disk.
       ansible.windows.win_shell: |
         $AppID = '{{ product_id }}'
         # Check registry for the product ID
@@ -72,9 +77,9 @@
       # Only clean up if the copy task succeeded.
       when: copy_result is succeeded
 
-    - name: 5. UN-AUTHENTICATE (Delete net use entry)
-      # Attempts to delete the temporary connection, ignoring cleanup errors.
-      ansible.windows.win_command: net use "{{ share_unc_root }}" /delete
+    - name: 5. UN-AUTHENTICATE (Delete Mapped Drive Z:)
+      # Deletes the temporary mapped drive, ignoring cleanup errors.
+      ansible.windows.win_command: net use "{{ mapped_drive_letter }}" /delete
       ignore_errors: yes 
       failed_when: false
 
