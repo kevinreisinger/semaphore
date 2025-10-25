@@ -13,7 +13,8 @@
     share_unc_root: "\\\\kevireis-home\\i$"
     installer_relative_path: "Applications\\Utilities\\7-Zip\\v25.01\\Setup.msi" 
     
-    # CRITICAL: Correct Product ID for idempotency check
+    # CRITICAL: Product ID that the idempotency check is currently failing on.
+    # We will verify this below.
     product_id: "{23170F69-40C1-2702-2501-000100000000}" 
 
     # Credentials (Must be provided securely via Semaphore/Vault)
@@ -47,6 +48,27 @@
     - name: "0.2. Set fact: App installation status"
       ansible.builtin.set_fact:
         app_is_installed: "{{ (app_check_result.stdout | from_json).installed | default(false) }}"
+
+    - name: "0.3. DEBUG: Find all installed applications and their GUIDs"
+      # This task runs ONLY if the check failed (meaning app_is_installed is false, but it shouldn't be).
+      # It will help us confirm the correct GUID.
+      ansible.windows.win_shell: |
+        Get-ItemProperty HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*, HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\* |
+        Where-Object { $_.DisplayName -like "7-Zip*" } |
+        Select-Object DisplayName, PSChildName, InstallLocation, DisplayVersion |
+        ConvertTo-Json
+      register: installed_7zip_info
+      when: not app_is_installed 
+      # Since the check is failing and the install is running, we execute this to diagnose.
+
+    - name: "0.4. DISPLAY DEBUG INFO: The suspected correct GUIDs for 7-Zip"
+      ansible.builtin.debug:
+        msg: |
+          **The idempotency check failed. Please review the 'PSChildName' (the GUID) below.**
+          **Use the GUID found here to update the 'product_id' variable in the vars section.**
+          {{ installed_7zip_info.stdout | from_json }}
+      when: not app_is_installed and installed_7zip_info.stdout is defined and (installed_7zip_info.stdout | from_json) | length > 0
+
 
     - name: "1. ESTABLISH UNC Connection and COPY Installer to Local Temp Directory"
       ansible.windows.win_shell: |
