@@ -1,6 +1,6 @@
 ---
-- name: Install 7-Zip
-  hosts: windows
+- name: Install 7-Zip (MSI) on Windows Host
+  hosts: windows_servers
   gather_facts: no
 
   vars:
@@ -21,7 +21,7 @@
   tasks:
     - name: Ensure 7-Zip is installed using win_package (MSI)
       ansible.windows.win_package:
-        name: "{{ app_name }}"
+        # REMOVED: The 'name' parameter, as it is unsupported in your environment.
         path: "{{ installer_path }}"
         product_id: "{{ product_id }}"
         state: present
