@@ -29,7 +29,6 @@
 
   tasks:
     - name: 1. MAP UNC Path to Drive Letter (Z:) and Authenticate Session (PowerShell Native)
-      # FIX: Added try...catch block to capture the real error and removed 'ignore_errors: yes'.
       ansible.windows.win_shell: |
         try {
           # Read credentials securely passed from the environment
@@ -47,19 +46,24 @@
           Write-Host "Drive mapped successfully."
         }
         catch {
-          # Catch the specific error and write it to the error stream
+          # Capture the specific error and write it to the error stream (stderr)
           Write-Error "Failed to map network drive. ERROR: $($_.Exception.Message)"
           exit 1 # Ensure Ansible sees the failure
         }
       
-      # Inject variables as environment variables for the shell
       environment:
         SHARE_USER: "{{ share_username }}"
         SHARE_PASS: "{{ share_password }}"
         
       no_log: true
-      # ignore_errors: yes  <-- REMOVED. We want this to fail loudly.
+      ignore_errors: yes  # TEMPORARY: Allow failure to continue to the diagnostic step
       register: auth_result
+
+    - name: "Diagnostic: Display Actual Drive Mapping Error"
+      ansible.builtin.debug:
+        msg: "Drive Mapping Failed! PowerShell Error: {{ auth_result.stderr | default('No specific error captured in stderr. Check connectivity.') }}"
+      # Run only if the previous task failed
+      when: auth_result is failed
 
     - name: 2. COPY 7-Zip Installer to Local Temp Directory (Using Mapped Drive Z:)
       ansible.windows.win_copy:
@@ -96,11 +100,9 @@
       ansible.windows.win_shell: Remove-PSDrive -Name "{{ mapped_drive_letter }}" -Force -ErrorAction SilentlyContinue
       ignore_errors: yes 
       failed_when: false
-      # Always run this cleanup if the auth task was at least attempted
-      when: auth_result is defined
+      when: auth_result is defined and auth_result is succeeded
 
     - name: Display installation status
       ansible.builtin.debug:
         msg: "Installation task complete. Output: {{ install_result.stdout_lines | default('Installation status not captured, check host logs.') }}"
       when: install_result is succeeded
-
