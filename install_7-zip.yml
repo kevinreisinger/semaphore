@@ -1,36 +1,51 @@
 ---
-- name: Install 7-Zip (MSI) on Windows Host
-  hosts: windows # <-- CORRECTED HOST GROUP
+- name: Install 7-Zip (MSI) on Windows Host via Mapped Drive
+  hosts: windows # Target host group
   gather_facts: no
 
   vars:
     app_name: "7-Zip 25.01 (x64)"
-    # Path to the installer file. Ensure this path exists on your file server!
-    installer_path: "\\\\kevireis-home\\i$\\Applications\\Utilities\\7-Zip\\v25.01\\Setup.msi" 
+    
+    # --- UNC PATH BREAKDOWN ---
+    # The UNC path to the resource that needs to be mapped (the share root)
+    share_unc_path: "\\\\kevireis-home\\i$"
+    # The subdirectory and filename of the installer (relative to the share root)
+    installer_subpath: "Applications\\Utilities\\7-Zip\\v25.01\\Setup.msi"
+    # The drive letter to use for the temporary mapping
+    mapped_drive_letter: "Z:"
+    # The final path used by win_package
+    mapped_installer_path: "{{ mapped_drive_letter }}\\{{ installer_subpath }}"
     
     # CRITICAL: This Product ID is for 7-Zip 25.01 x64.
-    # Ansible uses this to check the registry and ensure idempotency.
     product_id: "{23170F69-40C1-2702-2501-000100000000}" 
 
-    # --- Added Share Credentials for UNC access (Set these via Ansible Vault or Semaphore Credential!) ---
+    # --- REQUIRED: Set these via Semaphore Credential! ---
     share_username: ""
     share_password: ""
-    # -----------------------------------------------------------------------------
+    # ---------------------------------------------------
 
   tasks:
-    - name: Ensure 7-Zip is installed using win_package (MSI)
+    - name: 1. MAP Network Drive (Z:) using Share Credentials
+      ansible.windows.win_shell: |
+        # Use net use to map the UNC path with specific, authorized credentials
+        net use {{ mapped_drive_letter }} "{{ share_unc_path }}" "{{ share_password }}" /user:"{{ share_username }}" /persistent:no /force
+      # no_log hides the password from the logs
+      no_log: true
+      # Ignore error if the drive is already mapped (we will try to clean it up later)
+      ignore_errors: yes 
+
+    - name: 2. Ensure 7-Zip is installed using win_package (MSI) from MAPPED PATH
       ansible.windows.win_package:
-        # REMOVED: The 'name' parameter, as it is unsupported in your environment.
-        path: "{{ installer_path }}"
+        # Reference the installer via the new mapped drive path (Z:\...)
+        path: "{{ mapped_installer_path }}"
         product_id: "{{ product_id }}"
         state: present
-        # Arguments for silent installation (standard for MSI)
         arguments: /qn /norestart
+
+    - name: 3. UNMAP Network Drive (Z:)
+      ansible.windows.win_shell: net use {{ mapped_drive_letter }} /delete
+      ignore_errors: yes # Ignore errors if the drive was already deleted or never mapped
 
     - name: Display installation status
       ansible.builtin.debug:
-        msg: "Installation task attempted for {{ app_name }}. Check host status for success/failure."
-
-# Note: For EXE installers, you would need to use the 'arguments' 
-# parameter for silent install specific to that EXE (e.g., /S or --silent)
-# and use the 'creates_path' parameter instead of 'product_id' if no PID is available.
+        msg: "Installation task complete. 7-Zip v25.01 should now be installed on {{ inventory_hostname }}."
