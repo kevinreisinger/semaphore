@@ -1,12 +1,11 @@
 ---
 - name: Install 7-Zip (MSI) on Windows Host
-  hosts: windows_servers
+  hosts: windows # <-- CORRECTED HOST GROUP
   gather_facts: no
 
   vars:
     app_name: "7-Zip 25.01 (x64)"
     # Path to the installer file. Ensure this path exists on your file server!
-    # --- UPDATED PATH ---
     installer_path: "\\\\kevireis-home\\i$\\Applications\\Utilities\\7-Zip\\v25.01\\Setup.msi" 
     
     # CRITICAL: This Product ID is for 7-Zip 25.01 x64.
