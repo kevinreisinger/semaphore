@@ -29,16 +29,25 @@
 
   tasks:
     - name: 1. MAP UNC Path to Drive Letter (Z:) and Authenticate Session (PowerShell Native)
-      # FIX: Changed single quotes to double quotes around Jinja variables to resolve 
-      # the "unbalanced jinja2 block or quotes" parsing error.
+      # FINAL FIX: Pass sensitive variables via 'environment' to avoid YAML/Jinja parsing errors.
       ansible.windows.win_shell: |
-        # Create a Secure String for the password
-        $pass = ConvertTo-SecureString -String "{{ share_password }}" -AsPlainText -Force
-        # Create a PSCredential object
-        $cred = New-Object System.Management.Automation.PSCredential "{{ share_username }}", $pass
+        # Read credentials securely passed from the environment
+        $user = $env:SHARE_USER
+        $pass_string = $env:SHARE_PASS
         
-        # Create the temporary mapped drive Z: (we skip persistence as it's temporary)
+        # Create a Secure String for the password
+        $pass = ConvertTo-SecureString -String $pass_string -AsPlainText -Force
+        # Create a PSCredential object
+        $cred = New-Object System.Management.Automation.PSCredential $user, $pass
+        
+        # Create the temporary mapped drive Z:
         New-PSDrive -Name "{{ mapped_drive_letter }}" -PSProvider FileSystem -Root "{{ share_unc_root }}" -Credential $cred -Scope Global -Force
+      
+      # Inject variables as environment variables for the shell
+      environment:
+        SHARE_USER: "{{ share_username }}"
+        SHARE_PASS: "{{ share_password }}"
+        
       no_log: true
       ignore_errors: yes 
       register: auth_result
