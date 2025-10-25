@@ -40,9 +40,9 @@
           # Create a PSCredential object
           $cred = New-Object System.Management.Automation.PSCredential $user, $pass
           
-          # Create the temporary mapped drive Z:
+          # FIX 1: Removed '-Force' which caused the "parameter cannot be found" error on older PS versions.
           Write-Host "Attempting to map {{ share_unc_root }} to {{ mapped_drive_letter }}:..."
-          New-PSDrive -Name "{{ mapped_drive_letter }}" -PSProvider FileSystem -Root "{{ share_unc_root }}" -Credential $cred -Scope Global -Force
+          New-PSDrive -Name "{{ mapped_drive_letter }}" -PSProvider FileSystem -Root "{{ share_unc_root }}" -Credential $cred -Scope Global
           Write-Host "Drive mapped successfully."
         }
         catch {
@@ -56,14 +56,9 @@
         SHARE_PASS: "{{ share_password }}"
         
       no_log: true
-      ignore_errors: yes  # TEMPORARY: Allow failure to continue to the diagnostic step
+      # FIX 2: Removed temporary 'ignore_errors: yes' to ensure the playbook halts if auth fails.
       register: auth_result
-
-    - name: "Diagnostic: Display Actual Drive Mapping Error"
-      ansible.builtin.debug:
-        msg: "Drive Mapping Failed! PowerShell Error: {{ auth_result.stderr | default('No specific error captured in stderr. Check connectivity.') }}"
-      # Run only if the previous task failed
-      when: auth_result is failed
+      # This task will now only succeed if the drive is mapped, otherwise it fails loudly.
 
     - name: 2. COPY 7-Zip Installer to Local Temp Directory (Using Mapped Drive Z:)
       ansible.windows.win_copy:
@@ -82,27 +77,33 @@
         
         if (-not $Installed) {
             Write-Host "Installing {{ app_name }} from LOCAL path: {{ local_installer_path }}"
+            # Run msiexec directly from the local C:\Windows\Temp path
             msiexec.exe /i "{{ local_installer_path }}" /qn /norestart
         } else {
             Write-Host "{{ app_name }} is already installed. Skipping installation."
         }
       register: install_result
       changed_when: "'Installing' in install_result.stdout"
+      # FIX 4: Only run if the COPY task succeeded.
       when: copy_result is succeeded
 
     - name: 4. CLEANUP local installer file
+      # Remove the temporary installer from the target machine.
       ansible.windows.win_file:
         path: "{{ local_installer_path }}"
         state: absent
+      # FIX 4: Only clean up if the COPY task succeeded.
       when: copy_result is succeeded
 
     - name: 5. UN-AUTHENTICATE (Delete Mapped Drive Z:)
+      # FIX 5: Only attempt to remove the drive if Task 1 actually succeeded in creating it.
       ansible.windows.win_shell: Remove-PSDrive -Name "{{ mapped_drive_letter }}" -Force -ErrorAction SilentlyContinue
       ignore_errors: yes 
       failed_when: false
-      when: auth_result is defined and auth_result is succeeded
+      when: auth_result is succeeded
 
     - name: Display installation status
       ansible.builtin.debug:
         msg: "Installation task complete. Output: {{ install_result.stdout_lines | default('Installation status not captured, check host logs.') }}"
-      when: install_result is succeeded
+      # Only show final success message if the install was attempted and succeeded.
+      when: install_result is defined and install_result is succeeded
