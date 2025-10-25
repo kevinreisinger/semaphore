@@ -39,8 +39,8 @@
         if (-not $Installed) {
             Write-Host "Installing {{ app_name }} from UNC path: {{ installer_unc_path }}"
             # Execute MSI installer natively: /i=install, /qn=quiet no UI, /norestart
-            # Use Start-Process msiexec.exe to ensure proper path handling.
-            Start-Process msiexec.exe -ArgumentList "/i `\"{{ installer_unc_path }}`\" /qn /norestart" -Wait
+            # FIX: Simplified quoting for ArgumentList to ensure the UNC path is passed correctly.
+            Start-Process msiexec.exe -ArgumentList '/i "{{ installer_unc_path }}" /qn /norestart' -Wait
         } else {
             Write-Host "{{ app_name }} is already installed. Skipping installation."
         }
