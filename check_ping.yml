@@ -1,14 +1,14 @@
 ---
-- name: Ping Test (Windows)
+- name: Check Ping (Windows)
   hosts: windows
   gather_facts: no
   tasks:
-    - name: Ping test
+    - name: Check Ping (Windows)
       win_ping:
 
-- name: Ping Test (Linux)
+- name: Check Ping (Linux)
   hosts: linux
   gather_facts: no
   tasks:
-    - name: Ping Linux hosts
+    - name: Check Ping (Linux)
       ping:
