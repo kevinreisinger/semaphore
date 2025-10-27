@@ -17,7 +17,7 @@
     share_password: "" 
     
     # --- CLEANUP CONFIGURATION ---
-    backup_retention_days: 30 # Files older than this will be deleted from the remote share
+    backup_retention_days: 10 # Files older than this will be deleted from the remote share
 
     # --- BACKUP FILE CONFIGURATION ---
     local_temp_dir: "/tmp/semaphore_db_export"
