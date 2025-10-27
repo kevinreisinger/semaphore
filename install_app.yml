@@ -11,7 +11,7 @@
     app_name: "My New Application (e.g., Adobe Reader)"
     
     # 2. UNC File Path (Use DOUBLE BACKSLASHES: \\)
-    share_unc_root: "\\\\yourserver\\sharename$"
+    share_unc_root: "\\\\kevireis-home\\i$"
     installer_relative_path: "Software\\Path\\Installer.msi" 
     
     # CRITICAL: Find the Product ID in the registry after a manual install, 
