@@ -1,6 +1,6 @@
 ---
-- name: Install 7-Zip (MSI) on Windows Host via UNC Path (Idempotent)
-  hosts: windows # Target host group
+- name: Install 7-Zip
+  hosts: windows
   gather_facts: no
 
   # --------------------------------------------------------------------------
@@ -13,14 +13,14 @@
     share_unc_root: "\\\\kevireis-home\\i$"
     installer_relative_path: "Applications\\Utilities\\7-Zip\\v25.01\\Setup.msi" 
     
-    # CRITICAL: CORRECTED Product ID from debug output!
+    # CRITICAL: Product ID
     product_id: "{23170F69-40C1-2702-2501-000001000000}" 
 
-    # Credentials (Must be provided securely via Semaphore/Vault)
+    # Credentials
     share_username: ""
     share_password: ""
     
-    # Internal Path Variables (DO NOT CHANGE)
+    # Internal Path Variables
     installer_source_unc: "{{ share_unc_root }}\\{{ installer_relative_path }}"
     local_installer_path: 'C:\Windows\Temp\7zip_install.msi'
   # --------------------------------------------------------------------------
