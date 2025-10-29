@@ -15,8 +15,8 @@ vars:
   vm_id: 300 # Unique ID for the new VM (ensure this doesn't conflict with existing IDs)
   vm_name: "new-win-server-01"
   template_id: 150 # ID of the existing Windows template with Cloudbase-Init (MANDATORY)
-  ip_address_cidr: "192.168.1.50/24" # IP address with CIDR for the new VM
-  gateway: "192.168.1.1"
+  ip_address_cidr: "10.11.202.x/24" # IP address with CIDR for the new VM
+  gateway: "10.11.202.1"
   # NEW: DNS server IPs, space-separated, to be configured via Cloudbase-Init
   dns_servers: "10.11.202.25 10.11.202.30 75.75.75.75"
 
