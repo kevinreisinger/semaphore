@@ -6,16 +6,16 @@
 # ==============================================================================
 vars:
   # --- REQUIRED PROXMOX CREDENTIALS (API Access) ---
-  pve_host: "192.168.1.10" # IP of your Proxmox server
-  pve_user: "ansible_user@pve"
-  pve_pass: "YourVaultPassword"
-  pve_node: "pve-node-01" # The specific Proxmox node to build the VM on
+  pve_host: "10.11.202.41" # IP of your Proxmox server
+  pve_user: ""
+  pve_pass: ""
+  pve_node: "pmve02" # The specific Proxmox node to build the VM on
 
   # --- NEW WINDOWS VM CONFIGURATION ---
-  vm_id: 300 # Unique ID for the new VM (ensure this doesn't conflict with existing IDs)
-  vm_name: "new-win-server-01"
-  template_id: 150 # ID of the existing Windows template with Cloudbase-Init (MANDATORY)
-  ip_address_cidr: "10.11.202.x/24" # IP address with CIDR for the new VM
+  vm_id: 101 # Unique ID for the new VM (ensure this doesn't conflict with existing IDs)
+  vm_name: "kevireis-dload"
+  template_id: 100 # ID of the existing Windows template with Cloudbase-Init (MANDATORY)
+  ip_address_cidr: "10.11.202.14/24" # IP address with CIDR for the new VM
   gateway: "10.11.202.1"
   # NEW: DNS server IPs, space-separated, to be configured via Cloudbase-Init
   dns_servers: "10.11.202.25 10.11.202.30 75.75.75.75"
@@ -26,8 +26,8 @@ vars:
 
   # --- DOMAIN JOIN CONFIGURATION (NEW) ---
   domain_name: "REISINGERS"
-  domain_user: "Administrator@yourdomain.local" # Domain administrator account (must be UPN)
-  domain_password: "DomainAdminPassword123" # Password for the domain admin user
+  domain_user: "" # Domain administrator account (must be UPN)
+  domain_password: "" # Password for the domain admin user
 
 
 # ==============================================================================
