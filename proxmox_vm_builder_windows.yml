@@ -18,14 +18,14 @@ vars:
   ip_address_cidr: "192.168.1.50/24" # IP address with CIDR for the new VM
   gateway: "192.168.1.1"
   # NEW: DNS server IPs, space-separated, to be configured via Cloudbase-Init
-  dns_servers: "192.168.1.100 8.8.8.8 1.1.1.1"
+  dns_servers: "10.11.202.25 10.11.202.30 75.75.75.75"
 
   # --- WINDOWS GUEST LOGIN (Used by Cloudbase-Init for first boot & initial config) ---
   win_user: "Administrator" # Common default Windows user
   win_password: "SecurePassword456" # Temporary password set during Cloudbase-Init
 
   # --- DOMAIN JOIN CONFIGURATION (NEW) ---
-  domain_name: "yourdomain.local"
+  domain_name: "REISINGERS"
   domain_user: "Administrator@yourdomain.local" # Domain administrator account (must be UPN)
   domain_password: "DomainAdminPassword123" # Password for the domain admin user
 
