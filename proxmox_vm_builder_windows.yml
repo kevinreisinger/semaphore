@@ -7,7 +7,7 @@
   gather_facts: false
   
   # CRITICAL FIX: Explicitly setting the collection path. Adjust this to the actual
-  # location where collections were installed.
+  # location where you installed the collections.
   environment:
     ANSIBLE_COLLECTIONS_PATHS: "/usr/share/ansible/collections:/root/.ansible/collections" 
   
@@ -37,19 +37,20 @@
   tasks:
     # ----------------------------------------------------
     # 🔎 DEBUG TASKS (Temporary - Remove after success)
+    # **FIXED: Task name is now wrapped in single quotes.**
     # ----------------------------------------------------
-    - name: ⚙️ DEBUG: Show ANSIBLE_COLLECTIONS_PATHS environment variable
+    - name: '⚙️ DEBUG: Show ANSIBLE_COLLECTIONS_PATHS environment variable'
       ansible.builtin.debug:
-        var: lookup('env', 'ANSIBLE_COLLECTIONS_PATHS') # FIXED: Using 'var' instead of 'msg'
+        var: lookup('env', 'ANSIBLE_COLLECTIONS_PATHS')
       delegate_to: localhost
 
-    - name: 🔍 DEBUG: Show configured Ansible Collection Paths (via ansible-config)
+    - name: '🔍 DEBUG: Show configured Ansible Collection Paths (via ansible-config)'
       ansible.builtin.shell: |
         ansible-config dump | grep COLLECTIONS_PATHS
       register: path_dump
       delegate_to: localhost
 
-    - name: 💡 DEBUG: Display configured Paths
+    - name: '💡 DEBUG: Display configured Paths'
       ansible.builtin.debug:
         var: path_dump.stdout_lines
       delegate_to: localhost
