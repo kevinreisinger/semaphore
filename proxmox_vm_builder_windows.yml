@@ -1,101 +1,81 @@
 # ==============================================================================
 # ANSIBLE PLAYBOOK: Proxmox Windows VM Provisioning with Domain Join
-# This playbook runs in two stages:
-# 1. Provisioning (proxmox_hosts): Clones, configures, and starts the VM via Proxmox API.
-# 2. Configuration (newly_provisioned_windows): Joins the VM to the Active Directory domain via WinRM.
-#
-# NOTE: This version ASSUMES that 'proxmoxer' and 'pywinrm' are PRE-INSTALLED
-# in the Semaphore Execution Environment (EE).
 # ==============================================================================
 
-# ==============================================================================
-# PLAY 1: PROVISION THE VM ON PROXMOX
-# ==============================================================================
 - name: 1. Provision a New Windows VM on Proxmox VE
-  # Runs on the Ansible control node (connection: local) and communicates with the Proxmox API.
   hosts: proxmox_hosts
   gather_facts: no
   connection: local
 
-  vars: # Global Variables moved inside the first play definition
-    # --- REQUIRED PROXMOX CREDENTIALS (API Access) ---
-    pve_host: "10.11.202.41" # IP of your Proxmox server
-    pve_user: ""            # REQUIRED: Proxmox API user (e.g., ansible_user@pve)
-    pve_pass: ""            # REQUIRED: Proxmox API password
-    pve_node: "pmve02"      # The specific Proxmox node to build the VM on
-    ansible_python_interpreter: /usr/bin/python3 # Explicitly set interpreter path
+  vars:
+    pve_host: "10.11.202.41"
+    pve_user: ""        # e.g., ansible@pve
+    pve_pass: ""
+    pve_node: "pmve02"
 
-    # --- NEW WINDOWS VM CONFIGURATION ---
-    vm_id: 101 # Unique ID for the new VM (ensure this doesn't conflict with existing IDs)
+    ansible_python_interpreter: /usr/bin/python3
+
+    vm_id: 101
     vm_name: "kevireis-dload"
-    template_id: 100 # ID of the existing Windows template with Cloudbase-Init (MANDATORY)
-    ip_address_cidr: "10.11.2021.14/24" # IP address with CIDR for the new VM
+    template_id: 100
+    ip_address_cidr: "10.11.202.14/24"
     gateway: "10.11.202.1"
-    # NEW: DNS server IPs, space-separated, to be configured via Cloudbase-Init
     dns_servers: "10.11.202.25 10.11.202.30 75.75.75.75"
 
-    # --- WINDOWS GUEST LOGIN (Used by Cloudbase-Init for first boot & initial config) ---
-    win_user: "Administrator" # Common default Windows user
-    win_password: "SecurePassword456" # Temporary password set during Cloudbase-Init
+    win_user: "Administrator"
+    win_password: "SecurePassword456"
 
-    # --- DOMAIN JOIN CONFIGURATION (NEW) ---
     domain_name: "REISINGERS"
-    domain_user: "" # REQUIRED: Domain administrator account (must be UPN format: user@domain)
-    domain_password: "" # REQUIRED: Password for the domain admin user
-
+    domain_user: ""
+    domain_password: ""
 
   tasks:
-    # Adding a crucial environment variable to force the Python path lookup.
-    - name: 1.1. Ensure Proxmox is available
+    - name: 1.1. Ensure Proxmox is reachable
       ansible.builtin.wait_for:
         host: "{{ pve_host }}"
         port: 8006
         timeout: 30
       delegate_to: localhost
-      # Explicitly setting PYTHONPATH to include the system site-packages on Ubuntu 24.04
-      # where we know proxmoxer is installed.
-      environment:
-        PYTHONPATH: "/usr/lib/python3/dist-packages"
 
-    - name: 1.2. Clone the Windows template and configure VM resources
-      community.general.proxmox_vm:
+    - name: 1.2. Clone Windows template and configure VM
+      community.general.proxmox_kvm:
         api_host: "{{ pve_host }}"
         api_user: "{{ pve_user }}"
         api_password: "{{ pve_pass }}"
+        validate_certs: false
         node: "{{ pve_node }}"
         vmid: "{{ vm_id }}"
         name: "{{ vm_name }}"
-        state: present
-        target: "{{ template_id }}"
         clone: "{{ template_id }}"
-        ostype: "win"
+        full: true
+        state: present
         cores: 2
         memory: 8192
-        scsihw: "virtio-scsi-pci"
-        # Network Configuration
-        net:
-          net0: "model=virtio,bridge=vmbr0,ip={{ ip_address_cidr }},gw={{ gateway }},ip_nameservers={{ dns_servers }}"
-        # Cloudbase-Init Configuration (for Windows)
+        scsihw: virtio-scsi-pci
+        net0: "virtio,bridge=vmbr0"
+        ide2: "local:cloudinit"
         ciuser: "{{ win_user }}"
         cipassword: "{{ win_password }}"
+        ipconfig0: "ip={{ ip_address_cidr }},gw={{ gateway }}"
+        nameserver: "{{ dns_servers | replace(' ', ',') }}"
+        agent: 1
       register: vm_creation_output
-      # Applying the same environment fix to the task that is failing
       environment:
         PYTHONPATH: "/usr/lib/python3/dist-packages"
 
-    - name: 1.3. Start the newly provisioned Windows VM
-      community.general.proxmox_vm:
+    - name: 1.3. Start the new VM
+      community.general.proxmox_kvm:
         api_host: "{{ pve_host }}"
         api_user: "{{ pve_user }}"
         api_password: "{{ pve_pass }}"
+        validate_certs: false
         node: "{{ pve_node }}"
         vmid: "{{ vm_id }}"
         state: started
       environment:
         PYTHONPATH: "/usr/lib/python3/dist-packages"
 
-    - name: 1.4. Wait for the Windows VM to be available via WinRM
-      # The IP address is extracted by splitting the CIDR string.
+    - name: 1.4. Wait for WinRM to become available
       ansible.builtin.wait_for_connection:
         timeout: 600
         delay: 30
@@ -108,13 +88,11 @@
         ansible_winrm_transport: basic
         ansible_user: "{{ win_user }}"
         ansible_password: "{{ win_password }}"
-      # NOTE: No PYTHONPATH needed here as this is a standard Ansible module (wait_for_connection)
 
-    - name: 1.5. Add Windows VM to the inventory for configuration
-      # This allows the next play to target the new VM directly via WinRM.
+    - name: 1.5. Add new VM to dynamic inventory
       ansible.builtin.add_host:
         name: "{{ vm_name }}"
-        groups: "newly_provisioned_windows"
+        groups: newly_provisioned_windows
         ansible_host: "{{ ip_address_cidr | split('/') | first }}"
         ansible_port: 5986
         ansible_connection: winrm
@@ -124,41 +102,36 @@
         ansible_password: "{{ win_password }}"
       delegate_to: localhost
 
-
 # ==============================================================================
-# PLAY 2: CONFIGURE AND JOIN THE VM TO THE DOMAIN
+# PLAY 2: Domain Join
 # ==============================================================================
 - name: 2. Configure and Join VM to Active Directory Domain
-  hosts: newly_provisioned_windows # Targets the VM added in Play 1
+  hosts: newly_provisioned_windows
   gather_facts: no
-  connection: winrm # Ensures WinRM is used for this play
+  connection: winrm
 
   tasks:
-    - name: 2.1. Ensure VM is joined to the domain
+    - name: 2.1. Join VM to domain
       ansible.windows.win_domain_membership:
         dns_domain_name: "{{ domain_name }}"
-        hostname: "{{ vm_name }}" # Uses the name defined in vars
+        hostname: "{{ vm_name }}"
         state: domain
         domain_user: "{{ domain_user }}"
         domain_password: "{{ domain_password }}"
-        # Increase timeout as a reboot is often required after joining
         reboot_timeout: 1200
       register: domain_join_result
 
-    - name: 2.2. Display Domain Join Result
+    - name: 2.2. Report domain join result
       ansible.builtin.debug:
-        msg: "Domain join task complete. Reboot required: {{ domain_join_result.reboot_required | default('Unknown') }}. VM is now a member of {{ domain_name }}"
+        msg: >
+          Domain join complete. Reboot required: {{ domain_join_result.reboot_required | default('Unknown') }}
 
-    - name: 2.3. Wait for VM to reboot after domain join (if required)
+    - name: 2.3. Wait for reboot (if needed)
       ansible.builtin.wait_for_connection:
         timeout: 600
         delay: 30
-      when: domain_join_result.reboot_required is defined and domain_join_result.reboot_required
+      when: domain_join_result.reboot_required | default(false)
 
-    - name: 2.4. Verify connection using the Domain Administrator credentials (Optional)
-      # This task verifies that the VM is back up and that the domain join worked.
+    - name: 2.4. Verify domain membership
       ansible.builtin.debug:
-        msg: "VM is reachable as a domain member."
-      vars:
-        ansible_user: "{{ domain_user }}"
-        ansible_password: "{{ domain_password }}"
+        msg: "VM is reachable and joined to {{ domain_name }} as {{ vm_name }}"
