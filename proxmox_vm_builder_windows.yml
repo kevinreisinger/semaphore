@@ -11,13 +11,13 @@
     share_username: ""
 
     # VM configuration
-    vm_template_vmid: ""   # VMID of Windows template
-    vm_new_vmid: ""        # VMID for the new VM
-    vm_name: "NewWindowsVM"
-    vm_node: "pmve01"
+    vm_template_vmid: "100"   # VMID of Windows template
+    vm_new_vmid: "101"        # VMID for the new VM
+    vm_name: "kevireis-dload"
+    vm_node: "pmve02"
     vm_storage: "pmvenfs"
-    vm_memory: 4096
-    vm_cores: 2
+    vm_memory: 8192
+    vm_cores: 4
     vm_disk_size: 100G
 
   tasks:
