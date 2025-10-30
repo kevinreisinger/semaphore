@@ -1,47 +1,70 @@
 ---
-- name: 1. Provision a New Windows VM on Proxmox VE
+- name: Provision a New Windows VM on Proxmox VE
   hosts: pmve
   gather_facts: false
   vars:
-    pve_user: ""
-    pve_pass: ""
-    win_password: ""
-
+    pve_user: "{{ pve_user }}"
+    pve_pass: "{{ pve_pass }}"
+    win_password: "{{ win_password }}"
+    domain_user: "{{ domain_user }}"
+    share_username: "{{ share_username }}"
+    vm_template_name: "WindowsTemplate"
+    vm_name: "NewWindowsVM"
+    vm_node: "pmve01"
+    vm_storage: "local-lvm"
+    vm_memory: 4096
+    vm_cores: 2
+    vm_disk_size: 50G
   tasks:
 
-    - name: 1.1. Ensure Proxmox API is reachable
-      uri:
-        url: "https://{{ inventory_hostname }}/api2/json"
+    - name: Ensure Proxmox API is reachable
+      community.general.uri:
+        url: "https://{{ inventory_hostname }}:8006/api2/json/nodes"
         user: "{{ pve_user }}"
         password: "{{ pve_pass }}"
         method: GET
         validate_certs: no
       register: proxmox_api
-      retries: 3
+      retries: 5
       delay: 10
       until: proxmox_api.status == 200
 
-    - name: 1.2. Clone the Windows template and configure VM resources
-      community.proxmox.proxmox_kvm:
+    - name: Clone the Windows template and configure VM resources
+      community.proxmox.proxmox_vm:
         api_user: "{{ pve_user }}"
         api_password: "{{ pve_pass }}"
         api_host: "{{ inventory_hostname }}"
-        node: "pve"  # Adjust if your Proxmox node has a different name
-        vmid: 200
-        name: "win-vm-{{ inventory_hostname }}"
-        template: "win-template"
-        cores: 2
-        memory: 4096
-        netif:
-          - model: virtio
-            bridge: vmbr0
-        boot: "cdn"
-        state: present
+        vmid: "{{ 100 + ansible_host.split('.')[-1]|int }}"
+        name: "{{ vm_name }}"
+        clone: "{{ vm_template_name }}"
+        full: true
+        cores: "{{ vm_cores }}"
+        memory: "{{ vm_memory }}"
+        disk: "{{ vm_disk_size }}"
+        node: "{{ vm_node }}"
+        storage: "{{ vm_storage }}"
+        timeout: 30
+      delegate_to: localhost
 
-    - name: 2.1. Join VM to domain
-      microsoft.ad.membership:
-        hostname: "{{ inventory_hostname }}"
-        username: "Administrator"
-        password: "{{ win_password }}"
-        domain_name: "reisingers.com"
-        state: domain
+    - name: Wait for the Windows VM to be reachable over WinRM
+      ansible.windows.win_ping:
+      vars:
+        ansible_user: "{{ domain_user }}"
+        ansible_password: "{{ win_password }}"
+        ansible_connection: winrm
+        ansible_port: 5985
+        ansible_winrm_transport: basic
+      register: winrm_check
+      retries: 10
+      delay: 20
+      until: winrm_check.ping == "pong"
+
+    - name: Run initial configuration on the Windows VM
+      ansible.windows.win_shell: |
+        New-Item -Path "C:\Temp" -ItemType Directory -Force
+      vars:
+        ansible_user: "{{ domain_user }}"
+        ansible_password: "{{ win_password }}"
+        ansible_connection: winrm
+        ansible_port: 5985
+        ansible_winrm_transport: basic
