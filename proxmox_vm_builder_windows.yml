@@ -45,12 +45,17 @@
 
 
   tasks:
+    # Adding a crucial environment variable to force the Python path lookup.
     - name: 1.1. Ensure Proxmox is available
       ansible.builtin.wait_for:
         host: "{{ pve_host }}"
         port: 8006
         timeout: 30
       delegate_to: localhost
+      # Explicitly setting PYTHONPATH to include the system site-packages on Ubuntu 24.04
+      # where we know proxmoxer is installed.
+      environment:
+        PYTHONPATH: "/usr/lib/python3/dist-packages"
 
     - name: 1.2. Clone the Windows template and configure VM resources
       community.general.proxmox_vm:
@@ -74,6 +79,9 @@
         ciuser: "{{ win_user }}"
         cipassword: "{{ win_password }}"
       register: vm_creation_output
+      # Applying the same environment fix to the task that is failing
+      environment:
+        PYTHONPATH: "/usr/lib/python3/dist-packages"
 
     - name: 1.3. Start the newly provisioned Windows VM
       community.general.proxmox_vm:
@@ -83,6 +91,8 @@
         node: "{{ pve_node }}"
         vmid: "{{ vm_id }}"
         state: started
+      environment:
+        PYTHONPATH: "/usr/lib/python3/dist-packages"
 
     - name: 1.4. Wait for the Windows VM to be available via WinRM
       # The IP address is extracted by splitting the CIDR string.
@@ -98,6 +108,7 @@
         ansible_winrm_transport: basic
         ansible_user: "{{ win_user }}"
         ansible_password: "{{ win_password }}"
+      # NOTE: No PYTHONPATH needed here as this is a standard Ansible module (wait_for_connection)
 
     - name: 1.5. Add Windows VM to the inventory for configuration
       # This allows the next play to target the new VM directly via WinRM.
