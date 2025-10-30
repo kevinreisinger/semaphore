@@ -1,9 +1,5 @@
 # requirements.yml
 collections:
   - name: community.general
-    # Remove the specific 6.9.0 version which caused the last error.
-    # This fetches the latest stable version.
   - name: community.proxmox
-    version: 1.4.0
   - name: ansible.windows
-    # No version specified, fetches the latest stable version
