@@ -10,6 +10,10 @@
 
   # --- Global Variables moved inside Play 1 scope (available to all subsequent plays) ---
   vars:
+    # --- ANSIBLE PYTHON INTERPRETER FIX (Resolved) ---
+    # Setting the interpreter explicitly to the path where 'proxmoxer' and 'pywinrm' are installed.
+    ansible_python_interpreter: "/usr/bin/python3"
+
     # --- REQUIRED PROXMOX CREDENTIALS (API Access) ---
     pve_host: "10.11.202.41" # IP of your Proxmox server
     pve_user: "" # <<< REQUIRED: Your Proxmox API user (e.g., 'ansible_user@pve')
