@@ -3,18 +3,18 @@
   hosts: pmve
   gather_facts: false
   vars:
-    pve_user: "{{ pve_user }}"
-    pve_pass: "{{ pve_pass }}"
-    win_password: "{{ win_password }}"
-    domain_user: "{{ domain_user }}"
-    share_username: "{{ share_username }}"
+    pve_user: ""
+    pve_pass: ""
+    win_password: ""
+    domain_user: ""
+    share_username: ""
     vm_template_name: "WindowsTemplate"
     vm_name: "NewWindowsVM"
     vm_node: "pmve01"
-    vm_storage: "local-lvm"
+    vm_storage: "pmvenfs"
     vm_memory: 4096
     vm_cores: 2
-    vm_disk_size: 50G
+    vm_disk_size: 100G
   tasks:
 
     - name: Ensure Proxmox API is reachable
