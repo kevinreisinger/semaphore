@@ -10,8 +10,8 @@
     # 🌟 NEW VARIABLE: List of hosts (hostnames from inventory) to skip.
     # Add the exact hostnames of the servers you want to skip installation on here.
     skipped_hosts:
-      - 'dc08.reisingers.com'
-      - 'vmwvc1.reisingers.com'
+      - dc08.reisingers.com
+      - vmwvc1.reisingers.com
             
     app_name: "7-Zip 25.01 (x64)"
     
