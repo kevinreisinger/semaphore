@@ -1,131 +1,146 @@
-# =============================================================
-# Proxmox Windows VM Provisioning with Domain Join
-# =============================================================
+# ==============================================================================
+# ANSIBLE PLAYBOOK: Proxmox Windows VM Provisioning with Domain Join
+# Notes:
+# - Uses community.proxmox collection
+# - Uses microsoft.ad collection for domain join
+# - WinRM waits added for retries
+# - Credentials are blank for Semaphore to populate
+# ==============================================================================
 
-# ------------------------------
-# Play 1: Provision VM via Proxmox API
-# ------------------------------
+# ============================================================================
+# PLAY 1: PROVISION THE VM ON PROXMOX
+# ============================================================================
 - name: 1. Provision a New Windows VM on Proxmox VE
-  hosts: pmve
+  hosts: proxmox_hosts
   gather_facts: no
   connection: local
 
   vars:
     pve_host: "10.11.202.41"
-    pve_user: "ansible@pve"  # Proxmox API user
-    pve_pass: "YourPassword"
+    pve_user: ""       # Populated by Semaphore
+    pve_pass: ""       # Populated by Semaphore
     pve_node: "pmve02"
+    ansible_python_interpreter: /usr/bin/python3
 
     vm_id: 101
     vm_name: "kevireis-dload"
     template_id: 100
     ip_address_cidr: "10.11.202.14/24"
     gateway: "10.11.202.1"
-    dns_servers: ["10.11.202.25","10.11.202.30","75.75.75.75"]
+    dns_servers: "10.11.202.25 10.11.202.30 75.75.75.75"
 
     win_user: "Administrator"
-    win_password: "SecurePassword456"
+    win_password: ""   # Populated by Semaphore
+
+    domain_name: "REISINGERS"
+    domain_user: ""
+    domain_password: ""
 
   tasks:
-    - name: Ensure Proxmox API is reachable
+    - name: 1.1. Ensure Proxmox API is reachable
       ansible.builtin.wait_for:
         host: "{{ pve_host }}"
         port: 8006
         timeout: 30
+      delegate_to: localhost
 
-    - name: Clone Windows template and configure VM
+    - name: 1.2. Clone Windows template and configure VM
       community.proxmox.proxmox_kvm:
-        api_host: "{{ pve_host }}"
         api_user: "{{ pve_user }}"
         api_password: "{{ pve_pass }}"
-        validate_certs: false
+        api_host: "{{ pve_host }}"
         node: "{{ pve_node }}"
         vmid: "{{ vm_id }}"
         name: "{{ vm_name }}"
         clone: "{{ template_id }}"
-        full: true
         state: present
         cores: 2
         memory: 8192
+        ostype: win
         scsihw: virtio-scsi-pci
-        net0: "virtio,bridge=vmbr0"
-        ide2: "local:cloudinit"
-        agent: 1
+        net0: "model=virtio,bridge=vmbr0,ip={{ ip_address_cidr }},gw={{ gateway }},ip_nameservers={{ dns_servers }}"
         ciuser: "{{ win_user }}"
         cipassword: "{{ win_password }}"
-        ipconfig0: "ip={{ ip_address_cidr | split('/')[0] }},gw={{ gateway }}"
-        nameserver: "{{ dns_servers | join(',') }}"
-        winrm: true
-        winrm_port: 5986
-        winrm_scheme: https
       register: vm_creation_output
 
-    - name: Start the new VM
+    - name: 1.3. Start the VM
       community.proxmox.proxmox_kvm:
-        api_host: "{{ pve_host }}"
         api_user: "{{ pve_user }}"
         api_password: "{{ pve_pass }}"
-        validate_certs: false
+        api_host: "{{ pve_host }}"
         node: "{{ pve_node }}"
         vmid: "{{ vm_id }}"
         state: started
 
-    - name: Add VM to dynamic inventory for WinRM
-      ansible.builtin.add_host:
-        name: "{{ vm_name }}"
-        groups: newly_provisioned_windows
+    - name: 1.4. Wait for Windows VM to be available via WinRM
+      ansible.builtin.wait_for_connection:
+        timeout: 600
+        delay: 15
+      delegate_to: localhost
+      vars:
         ansible_host: "{{ ip_address_cidr | split('/') | first }}"
-        ansible_connection: winrm
         ansible_port: 5986
+        ansible_connection: winrm
         ansible_winrm_server_cert_validation: ignore
         ansible_winrm_transport: basic
         ansible_user: "{{ win_user }}"
         ansible_password: "{{ win_password }}"
 
-# ------------------------------
-# Play 2: Join VM to Active Directory
-# ------------------------------
-- name: 2. Configure and Join VM to AD Domain
+    - name: 1.5. Add Windows VM to inventory
+      ansible.builtin.add_host:
+        name: "{{ vm_name }}"
+        groups: newly_provisioned_windows
+        ansible_host: "{{ ip_address_cidr | split('/') | first }}"
+        ansible_port: 5986
+        ansible_connection: winrm
+        ansible_winrm_server_cert_validation: ignore
+        ansible_winrm_transport: basic
+        ansible_user: "{{ win_user }}"
+        ansible_password: "{{ win_password }}"
+      delegate_to: localhost
+
+# ============================================================================
+# PLAY 2: CONFIGURE WINDOWS VM AND JOIN DOMAIN
+# ============================================================================
+- name: 2. Configure and Join Windows VM to Active Directory
   hosts: newly_provisioned_windows
   gather_facts: no
   connection: winrm
 
-  vars:
-    domain_name: "REISINGERS"
-    domain_user: "administrator@reisingers.com"
-    domain_password: "YourDomainPassword"
-
   tasks:
-    - name: Wait for WinRM to become available
+    - name: 2.1. Wait until WinRM is available with retries
       ansible.builtin.wait_for_connection:
         timeout: 600
-        delay: 30
+        delay: 15
+      register: winrm_ready
+      retries: 40
+      delay: 15
+      until: winrm_ready is success
 
-    - name: Join Windows VM to Active Directory
+    - name: 2.2. Join VM to domain
       microsoft.ad.membership:
-        name: "{{ vm_name }}"
-        domain: "{{ domain_name }}"
+        hostname: "{{ inventory_hostname }}"
         dns_domain_name: "{{ domain_name }}"
         state: domain
-        username: "{{ domain_user }}"
-        password: "{{ domain_password }}"
+        domain_user: "{{ domain_user }}"
+        domain_password: "{{ domain_password }}"
         reboot: yes
         reboot_timeout: 1200
       register: domain_join_result
 
-    - name: Display domain join result
-      ansible.builtin.debug:
-        msg: "Domain join complete. Reboot required: {{ domain_join_result.reboot_required | default('Unknown') }}"
-
-    - name: Wait for VM to come back online after reboot
+    - name: 2.3. Wait for VM to come back online after domain join
       ansible.builtin.wait_for_connection:
         timeout: 600
-        delay: 30
-      when: domain_join_result.reboot_required is defined and domain_join_result.reboot_required
+        delay: 15
+      register: post_reboot_ready
+      retries: 40
+      delay: 15
+      until: post_reboot_ready is success
+      when: domain_join_result.reboot_required | default(false)
 
-    - name: Confirm connection as domain admin
+    - name: 2.4. Verify connection using domain credentials
       ansible.builtin.debug:
-        msg: "VM is reachable as a domain member."
+        msg: "VM is reachable and joined to domain {{ domain_name }}"
       vars:
         ansible_user: "{{ domain_user }}"
         ansible_password: "{{ domain_password }}"
