@@ -1,0 +1,7 @@
+# requirements.yml
+collections:
+  - name: community.general
+    version: 6.9.0
+  - name: community.proxmox
+    version: 1.4.0
+  - name: ansible.windows
