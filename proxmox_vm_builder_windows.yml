@@ -1,20 +1,29 @@
-# ===================================================================
+# ==============================================================================
 # ANSIBLE PLAYBOOK: Proxmox Windows VM Provisioning with Domain Join
-# ===================================================================
+# ==============================================================================
+# Playbook runs in two stages:
+# 1. Provisioning: clone, configure, and start VM via Proxmox API
+# 2. Configuration: join Windows VM to AD domain via WinRM
+# ==============================================================================
+# REQUIREMENTS:
+# - Proxmoxer installed in Semaphore EE
+# - pywinrm installed in Semaphore EE
+# - Microsoft AD collection installed for domain join
+# ==============================================================================
 
-# ------------------------
+# ==============================================================================
 # PLAY 1: PROVISION THE VM ON PROXMOX
-# ------------------------
+# ==============================================================================
 - name: 1. Provision a New Windows VM on Proxmox VE
-  hosts: pmve                    # Linux Proxmox hosts
+  hosts: pmve
   gather_facts: no
-  connection: local               # Talk to Proxmox API locally (via Python)
+  connection: local
 
   vars:
-    pve_host: "10.11.202.41"     # Proxmox server IP
-    pve_user: ""                 # Populated by Semaphore
-    pve_pass: ""                 # Populated by Semaphore
-    pve_node: "pmve02"           # Proxmox node to create the VM on
+    pve_host: "10.11.202.41"
+    pve_user: ""
+    pve_pass: ""
+    pve_node: "pmve02"
     ansible_python_interpreter: /usr/bin/python3
 
     vm_id: 101
@@ -25,11 +34,11 @@
     dns_servers: "10.11.202.25 10.11.202.30 75.75.75.75"
 
     win_user: "Administrator"
-    win_password: ""             # Populated by Semaphore
+    win_password: ""
 
     domain_name: "REISINGERS"
-    domain_user: ""              # Populated by Semaphore
-    domain_password: ""          # Populated by Semaphore
+    domain_user: ""
+    domain_password: ""
 
   tasks:
     - name: 1.1. Ensure Proxmox API is reachable
@@ -67,7 +76,21 @@
         vmid: "{{ vm_id }}"
         state: started
 
-    - name: 1.4. Add Windows VM to inventory for configuration
+    - name: 1.4. Wait for the Windows VM to be available via WinRM
+      ansible.builtin.wait_for_connection:
+        timeout: 600
+        delay: 30
+      delegate_to: localhost
+      vars:
+        ansible_host: "{{ ip_address_cidr | split('/') | first }}"
+        ansible_port: 5986
+        ansible_connection: winrm
+        ansible_winrm_server_cert_validation: ignore
+        ansible_winrm_transport: basic
+        ansible_user: "{{ win_user }}"
+        ansible_password: "{{ win_password }}"
+
+    - name: 1.5. Add Windows VM to inventory
       ansible.builtin.add_host:
         name: "{{ vm_name }}"
         groups: "newly_provisioned_windows"
@@ -80,9 +103,9 @@
         ansible_password: "{{ win_password }}"
       delegate_to: localhost
 
-# ------------------------
-# PLAY 2: CONFIGURE AND JOIN VM TO DOMAIN
-# ------------------------
+# ==============================================================================
+# PLAY 2: CONFIGURE AND JOIN THE VM TO THE DOMAIN
+# ==============================================================================
 - name: 2. Configure and Join VM to Active Directory Domain
   hosts: newly_provisioned_windows
   gather_facts: no
@@ -100,12 +123,19 @@
         reboot_timeout: 1200
       register: domain_join_result
 
-    - name: 2.2. Wait for VM to reboot after domain join
+    - name: 2.2. Display domain join result
+      ansible.builtin.debug:
+        msg: "Domain join task complete. Reboot required: {{ domain_join_result.reboot_required | default('Unknown') }}. VM is now a member of {{ domain_name }}"
+
+    - name: 2.3. Wait for VM to reboot after domain join (if required)
       ansible.builtin.wait_for_connection:
         timeout: 600
         delay: 30
       when: domain_join_result.reboot_required is defined and domain_join_result.reboot_required
 
-    - name: 2.3. Verify domain join
+    - name: 2.4. Verify connection using Domain Admin credentials
       ansible.builtin.debug:
-        msg: "VM {{ vm_name }} is now a member of {{ domain_name }}"
+        msg: "VM is reachable as a domain member."
+      vars:
+        ansible_user: "{{ domain_user }}"
+        ansible_password: "{{ domain_password }}"
