@@ -3,7 +3,7 @@
 # Notes:
 # - Uses community.proxmox collection
 # - Uses microsoft.ad collection for domain join
-# - WinRM waits added for retries
+# - WinRM retries added for VM readiness
 # - Credentials are blank for Semaphore to populate
 # ==============================================================================
 
@@ -11,7 +11,7 @@
 # PLAY 1: PROVISION THE VM ON PROXMOX
 # ============================================================================
 - name: 1. Provision a New Windows VM on Proxmox VE
-  hosts: proxmox_hosts
+  hosts: pmve
   gather_facts: no
   connection: local
 
