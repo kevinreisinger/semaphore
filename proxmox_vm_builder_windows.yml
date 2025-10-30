@@ -1,15 +1,14 @@
 ---
 # ==============================================================================
 # PLAY 1: PROVISIONING (Runs on the Proxmox host 'pmve')
-# Actions: Clone VM, Add New VM to Inventory
 # ==============================================================================
 - name: ☁️ Provision a New Windows VM on Proxmox VE
   hosts: pmve
   gather_facts: false
   
-  # CRITICAL FIX: Explicitly setting the collection path to ensure modules are found.
+  # CRITICAL FIX: Explicitly setting the collection path. Adjust this to the actual
+  # location where collections were installed.
   environment:
-    # Use the path where you installed the collections (e.g., global path or your user's home path)
     ANSIBLE_COLLECTIONS_PATHS: "/usr/share/ansible/collections:/root/.ansible/collections" 
   
   vars:
@@ -41,7 +40,7 @@
     # ----------------------------------------------------
     - name: ⚙️ DEBUG: Show ANSIBLE_COLLECTIONS_PATHS environment variable
       ansible.builtin.debug:
-        msg: "ANSIBLE_COLLECTIONS_PATHS (Env Var): {{ lookup('env', 'ANSIBLE_COLLECTIONS_PATHS') }}"
+        var: lookup('env', 'ANSIBLE_COLLECTIONS_PATHS') # FIXED: Using 'var' instead of 'msg'
       delegate_to: localhost
 
     - name: 🔍 DEBUG: Show configured Ansible Collection Paths (via ansible-config)
@@ -54,7 +53,7 @@
       ansible.builtin.debug:
         var: path_dump.stdout_lines
       delegate_to: localhost
-      # ----------------------------------------------------
+    # ----------------------------------------------------
 
     - name: 🎯 Ensure Proxmox API is reachable
       community.general.uri:
