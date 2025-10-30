@@ -3,18 +3,23 @@
   hosts: pmve
   gather_facts: false
   vars:
+    # These can be populated from Semaphore
     pve_user: ""
     pve_pass: ""
     win_password: ""
     domain_user: ""
     share_username: ""
-    vm_template_name: "WindowsTemplate"
+
+    # VM configuration
+    vm_template_vmid: ""   # VMID of Windows template
+    vm_new_vmid: ""        # VMID for the new VM
     vm_name: "NewWindowsVM"
     vm_node: "pmve01"
     vm_storage: "pmvenfs"
     vm_memory: 4096
     vm_cores: 2
     vm_disk_size: 100G
+
   tasks:
 
     - name: Ensure Proxmox API is reachable
@@ -34,9 +39,9 @@
         api_user: "{{ pve_user }}"
         api_password: "{{ pve_pass }}"
         api_host: "{{ inventory_hostname }}"
-        vmid: "{{ 100 + ansible_host.split('.')[-1]|int }}"
+        vmid: "{{ vm_new_vmid }}"       # New VMID from variable
         name: "{{ vm_name }}"
-        clone: "{{ vm_template_name }}"
+        clone: "{{ vm_template_vmid }}" # Template VMID
         full: true
         cores: "{{ vm_cores }}"
         memory: "{{ vm_memory }}"
@@ -48,7 +53,6 @@
 
     - name: Wait for the Windows VM to be reachable over WinRM
       ansible.windows.win_ping:
-      vars:
         ansible_user: "{{ domain_user }}"
         ansible_password: "{{ win_password }}"
         ansible_connection: winrm
