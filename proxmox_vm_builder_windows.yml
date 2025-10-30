@@ -20,6 +20,12 @@
     vm_cores: 4
     vm_disk_size: 100G
 
+    # Networking configuration
+    vm_ip: "10.11.202.14"
+    vm_netmask: 24
+    vm_gateway: "10.11.202.1"
+    vm_dns: "10.11.202.25 10.11.202.30 75.75.75.75"
+
   tasks:
 
     - name: Ensure Proxmox API is reachable
@@ -63,7 +69,19 @@
       delay: 20
       until: winrm_check.ping == "pong"
 
-    - name: Run initial configuration on the Windows VM
+    - name: Configure networking on the Windows VM
+      ansible.windows.win_shell: |
+        $Interface = Get-NetAdapter | Where-Object {$_.Status -eq "Up"} | Select-Object -First 1
+        New-NetIPAddress -InterfaceAlias $Interface.Name -IPAddress "{{ vm_ip }}" -PrefixLength {{ vm_netmask }} -DefaultGateway "{{ vm_gateway }}"
+        Set-DnsClientServerAddress -InterfaceAlias $Interface.Name -ServerAddresses "{{ vm_dns.split() | join(',') }}"
+      vars:
+        ansible_user: "{{ domain_user }}"
+        ansible_password: "{{ win_password }}"
+        ansible_connection: winrm
+        ansible_port: 5985
+        ansible_winrm_transport: basic
+
+    - name: Create Temp folder for initial configuration
       ansible.windows.win_shell: |
         New-Item -Path "C:\Temp" -ItemType Directory -Force
       vars:
