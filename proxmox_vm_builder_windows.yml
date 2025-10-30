@@ -1,21 +1,27 @@
 ---
 # ==============================================================================
-# PLAY 1: Provisioning the VM (Runs on the Proxmox host 'pmve')
+# PLAY 1: PROVISIONING (Runs on the Proxmox host 'pmve')
+# Actions: Clone VM, Add New VM to Inventory
 # ==============================================================================
-- name: 🚀 Provision a New Windows VM on Proxmox VE
+- name: ☁️ Provision a New Windows VM on Proxmox VE
   hosts: pmve
   gather_facts: false
   
+  # CRITICAL FIX: Explicitly setting the collection path to ensure modules are found.
+  environment:
+    # Use the path where you installed the collections (e.g., global path or your user's home path)
+    ANSIBLE_COLLECTIONS_PATHS: "/usr/share/ansible/collections:/root/.ansible/collections" 
+  
   vars:
     # --- Credentials (Ensure these are passed in via Vault or Semaphore) ---
-    pve_user: ""            # e.g., 'ansible@pam'
+    pve_user: ""
     pve_pass: ""
-    win_password: ""        # Local Admin / Domain User Password
-    domain_user: ""         # e.g., 'Administrator'
+    win_password: ""
+    domain_user: ""
     
     # --- VM Configuration ---
-    vm_template_vmid: "100"  # VMID of Windows template
-    vm_new_vmid: "101"       # VMID for the new VM
+    vm_template_vmid: "100"
+    vm_new_vmid: "101"
     vm_name: "kevireis-dload"
     vm_node: "pmve02"
     vm_storage: "pmvenfs"
@@ -27,10 +33,29 @@
     vm_ip: "10.11.202.14"
     vm_netmask: 24
     vm_gateway: "10.11.202.1"
-    # Note: vm_dns is space-separated, which is correct for PowerShell array input
     vm_dns: "10.11.202.25 10.11.202.30 75.75.75.75"
 
   tasks:
+    # ----------------------------------------------------
+    # 🔎 DEBUG TASKS (Temporary - Remove after success)
+    # ----------------------------------------------------
+    - name: ⚙️ DEBUG: Show ANSIBLE_COLLECTIONS_PATHS environment variable
+      ansible.builtin.debug:
+        msg: "ANSIBLE_COLLECTIONS_PATHS (Env Var): {{ lookup('env', 'ANSIBLE_COLLECTIONS_PATHS') }}"
+      delegate_to: localhost
+
+    - name: 🔍 DEBUG: Show configured Ansible Collection Paths (via ansible-config)
+      ansible.builtin.shell: |
+        ansible-config dump | grep COLLECTIONS_PATHS
+      register: path_dump
+      delegate_to: localhost
+
+    - name: 💡 DEBUG: Display configured Paths
+      ansible.builtin.debug:
+        var: path_dump.stdout_lines
+      delegate_to: localhost
+      # ----------------------------------------------------
+
     - name: 🎯 Ensure Proxmox API is reachable
       community.general.uri:
         url: "https://{{ inventory_hostname }}:8006/api2/json/nodes"
@@ -43,7 +68,7 @@
       delay: 10
       until: proxmox_api.status == 200
 
-    - name: ☁️ Clone Windows template and configure VM resources
+    - name: 💾 Clone Windows template and configure VM resources
       community.proxmox.proxmox_vm:
         api_user: "{{ pve_user }}"
         api_password: "{{ pve_pass }}"
@@ -73,32 +98,26 @@
       delegate_to: localhost
       
 # ==============================================================================
-# PLAY 2: Configuration (Runs on the newly created Windows VM)
+# PLAY 2: CONFIGURATION (Runs on the newly created Windows VM)
 # ==============================================================================
 - name: ⚙️ Configure the newly provisioned Windows VM
   hosts: new_windows_vms
-  gather_facts: false # Gathering facts would happen after network config if needed
+  gather_facts: false 
 
   tasks:
-    - name: ⏳ Wait for Windows VM to respond to WinRM (Ping Check)
+    - name: ⏳ Wait for Windows VM to respond to WinRM
       ansible.windows.win_ping:
       register: winrm_check
-      retries: 15 # Increased retries/delay for Windows startup time
+      retries: 15
       delay: 20
       until: winrm_check.ping == "pong"
     
     - name: 🌐 Configure static IP networking
       ansible.windows.win_shell: |
-        # Identify the first active network adapter
         $Interface = Get-NetAdapter | Where-Object {$_.Status -eq "Up"} | Select-Object -First 1
-        
-        # Set the IP address, subnet, and gateway
         New-NetIPAddress -InterfaceAlias $Interface.Name -IPAddress "{{ vm_ip }}" -PrefixLength {{ vm_netmask }} -DefaultGateway "{{ vm_gateway }}"
-        
-        # Set DNS servers (corrected: vm_dns is passed as is, using spaces)
         Set-DnsClientServerAddress -InterfaceAlias $Interface.Name -ServerAddresses "{{ vm_dns }}"
       when: vm_ip | length > 0
-      # Note: WinRM variables are inherited from the 'add_host' task.
 
     - name: 📁 Create Temp directory on Windows VM
       ansible.windows.win_shell: |
