@@ -13,7 +13,7 @@
     # VM configuration
     vm_template_vmid: "100"   # VMID of Windows template
     vm_new_vmid: "101"        # VMID for the new VM
-    vm_name: "NewWindowsVM"
+    vm_name: "kevireis-dload"
     vm_node: "pmve02"
     vm_storage: "pmvenfs"
     vm_memory: 8192
@@ -21,10 +21,10 @@
     vm_disk_size: 100G
 
     # Optional static networking (if not provided, network task is skipped)
-    vm_ip: ""          # e.g. 10.11.202.14
+    vm_ip: "10.11.202.14"          # e.g. 10.11.202.14
     vm_netmask: 24
-    vm_gateway: ""
-    vm_dns: "8.8.8.8 1.1.1.1"
+    vm_gateway: "10.11.202.1"
+    vm_dns: "10.11.202.25 10.11.202.30 75.75.75.75"
 
   pre_tasks:
     - name: Ensure required collections are installed
