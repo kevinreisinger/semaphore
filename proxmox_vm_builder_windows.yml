@@ -1,7 +1,3 @@
-# ==============================================================================
-# ANSIBLE PLAYBOOK: Proxmox Windows VM Provisioning with Domain Join
-# ==============================================================================
-
 - name: 1. Provision a New Windows VM on Proxmox VE
   hosts: proxmox_hosts
   gather_facts: no
@@ -13,21 +9,15 @@
     pve_pass: ""
     pve_node: "pmve02"
 
-    ansible_python_interpreter: /usr/bin/python3
-
     vm_id: 101
     vm_name: "kevireis-dload"
     template_id: 100
     ip_address_cidr: "10.11.202.14/24"
     gateway: "10.11.202.1"
-    dns_servers: "10.11.202.25 10.11.202.30 75.75.75.75"
+    dns_servers: ["10.11.202.25","10.11.202.30","75.75.75.75"]
 
     win_user: "Administrator"
     win_password: "SecurePassword456"
-
-    domain_name: "REISINGERS"
-    domain_user: ""
-    domain_password: ""
 
   tasks:
     - name: 1.1. Ensure Proxmox is reachable
@@ -54,11 +44,17 @@
         scsihw: virtio-scsi-pci
         net0: "virtio,bridge=vmbr0"
         ide2: "local:cloudinit"
+        agent: 1
+        # Cloud-Init configuration for Windows static IP + DNS + WinRM
         ciuser: "{{ win_user }}"
         cipassword: "{{ win_password }}"
-        ipconfig0: "ip={{ ip_address_cidr }},gw={{ gateway }}"
-        nameserver: "{{ dns_servers | replace(' ', ',') }}"
-        agent: 1
+        ipconfig0: >
+          ip={{ ip_address_cidr | split('/')[0] }},
+          gw={{ gateway }}
+        nameserver: "{{ dns_servers | join(',') }}"
+        winrm: true
+        winrm_port: 5986
+        winrm_scheme: https
       register: vm_creation_output
       environment:
         PYTHONPATH: "/usr/lib/python3/dist-packages"
@@ -101,39 +97,3 @@
         ansible_user: "{{ win_user }}"
         ansible_password: "{{ win_password }}"
       delegate_to: localhost
-
-
-# ==============================================================================
-# PLAY 2: DOMAIN JOIN USING MICROSOFT.AD COLLECTION
-# ==============================================================================
-- name: 2. Configure and Join VM to Active Directory Domain
-  hosts: newly_provisioned_windows
-  gather_facts: no
-  connection: winrm
-
-  tasks:
-    - name: 2.1. Join VM to domain
-      microsoft.ad.membership:
-        dns_domain_name: "{{ domain_name }}"
-        hostname: "{{ vm_name }}"
-        state: domain
-        domain_admin_user: "{{ domain_user }}"
-        domain_admin_password: "{{ domain_password }}"
-        reboot: true
-        reboot_timeout: 1200
-      register: domain_join_result
-
-    - name: 2.2. Report domain join result
-      ansible.builtin.debug:
-        msg: >
-          Domain join complete. Reboot required: {{ domain_join_result.reboot_required | default('Unknown') }}
-
-    - name: 2.3. Wait for reboot (if needed)
-      ansible.builtin.wait_for_connection:
-        timeout: 600
-        delay: 30
-      when: domain_join_result.reboot_required | default(false)
-
-    - name: 2.4. Verify domain membership
-      ansible.builtin.debug:
-        msg: "VM is reachable and joined to {{ domain_name }} as {{ vm_name }}"
