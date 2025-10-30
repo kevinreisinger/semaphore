@@ -4,7 +4,7 @@
 # 1. Provisioning (proxmox_hosts): Clones, configures, and starts the VM via Proxmox API.
 # 2. Configuration (newly_provisioned_windows): Joins the VM to the Active Directory domain via WinRM.
 #
-# NOTE: Task 1.1 (pip module) is included as a necessary hack to ensure Python
+# NOTE: Task 1.1 (shell install) is included as a necessary hack to ensure Python
 # dependencies (proxmoxer, pywinrm) are available in the isolated Semaphore
 # Execution Environment.
 # ==============================================================================
@@ -46,16 +46,14 @@
 
 
   tasks:
-    - name: 1.1. Ensure Python dependencies are installed for Proxmox/WinRM (SEMAPHORE HACK)
-      # This task forces the installation of required Python libraries inside the isolated
-      # execution environment, which often lacks them by default.
-      ansible.builtin.pip:
-        name:
-          - proxmoxer
-          - pywinrm
-        extra_args: --break-system-packages
+    - name: 1.1. Ensure Python dependencies are installed for Proxmox/WinRM (ULTRA HACK)
+      # Uses shell and sudo to aggressively install libraries globally in the EE.
+      ansible.builtin.shell: |
+        pip install proxmoxer pywinrm --break-system-packages
       delegate_to: localhost
+      become: true # Attempt installation with elevated privileges
       ignore_errors: yes # Ignore if already installed or if installation fails due to policy
+      changed_when: false # Prevent this task from reporting a change
 
     - name: 1.2. Ensure Proxmox is available
       ansible.builtin.wait_for:
