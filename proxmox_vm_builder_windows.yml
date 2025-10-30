@@ -3,7 +3,7 @@
   hosts: pmve
   gather_facts: false
   vars:
-    # These can be populated from Semaphore
+    # Credentials (set in Semaphore)
     pve_user: ""
     pve_pass: ""
     win_password: ""
@@ -20,15 +20,54 @@
     vm_cores: 4
     vm_disk_size: 100G
 
-    # Networking configuration
+    # Optional static networking (if not provided, network task is skipped)
     vm_ip: "10.11.202.14"
     vm_netmask: 24
     vm_gateway: "10.11.202.1"
     vm_dns: "10.11.202.25 10.11.202.30 75.75.75.75"
 
-  tasks:
+  pre_tasks:
+    - name: Check for required collections
+      ansible.builtin.shell: |
+        ansible-galaxy collection list | grep -E 'community\.general|community\.proxmox' || true
+      register: collection_check
+      changed_when: false
+      delegate_to: localhost
 
-    - name: Clone the Windows template and configure VM resources
+    - name: Install missing collections if needed
+      ansible.builtin.shell: |
+        if ! ansible-galaxy collection list | grep -q community.general; then
+          ansible-galaxy collection install community.general:6.9.0 -p ./collections
+        fi
+        if ! ansible-galaxy collection list | grep -q community.proxmox; then
+          ansible-galaxy collection install community.proxmox:1.4.0 -p ./collections
+        fi
+      args:
+        chdir: "{{ playbook_dir }}"
+      when: collection_check.stdout is not search("community.proxmox") or
+            collection_check.stdout is not search("community.general")
+      changed_when: false
+      delegate_to: localhost
+
+    - name: Set collection path for this play
+      ansible.builtin.set_env:
+        ANSIBLE_COLLECTIONS_PATHS: "{{ playbook_dir }}/collections:/usr/share/ansible/collections"
+      delegate_to: localhost
+
+  tasks:
+    - name: Ensure Proxmox API is reachable
+      community.general.uri:
+        url: "https://{{ inventory_hostname }}:8006/api2/json/nodes"
+        user: "{{ pve_user }}"
+        password: "{{ pve_pass }}"
+        method: GET
+        validate_certs: no
+      register: proxmox_api
+      retries: 5
+      delay: 10
+      until: proxmox_api.status == 200
+
+    - name: Clone Windows template and configure VM resources
       community.proxmox.proxmox_vm:
         api_user: "{{ pve_user }}"
         api_password: "{{ pve_pass }}"
@@ -45,7 +84,7 @@
         timeout: 30
       delegate_to: localhost
 
-    - name: Wait for the Windows VM to be reachable over WinRM
+    - name: Wait for Windows VM to respond to WinRM
       ansible.windows.win_ping:
         ansible_user: "{{ domain_user }}"
         ansible_password: "{{ win_password }}"
@@ -57,7 +96,7 @@
       delay: 20
       until: winrm_check.ping == "pong"
 
-    - name: Configure networking on the Windows VM
+    - name: Configure static IP networking (only if vm_ip is defined)
       ansible.windows.win_shell: |
         $Interface = Get-NetAdapter | Where-Object {$_.Status -eq "Up"} | Select-Object -First 1
         New-NetIPAddress -InterfaceAlias $Interface.Name -IPAddress "{{ vm_ip }}" -PrefixLength {{ vm_netmask }} -DefaultGateway "{{ vm_gateway }}"
@@ -68,8 +107,9 @@
         ansible_connection: winrm
         ansible_port: 5985
         ansible_winrm_transport: basic
+      when: vm_ip | length > 0
 
-    - name: Create Temp folder for initial configuration
+    - name: Create Temp directory on Windows VM
       ansible.windows.win_shell: |
         New-Item -Path "C:\Temp" -ItemType Directory -Force
       vars:
