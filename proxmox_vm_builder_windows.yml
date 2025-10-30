@@ -21,7 +21,7 @@
     vm_disk_size: 100G
 
     # Optional static networking (if not provided, network task is skipped)
-    vm_ip: "10.11.202.14"          # e.g. 10.11.202.14
+    vm_ip: "10.11.202.14"          # e.g. 10.11.202.100
     vm_netmask: 24
     vm_gateway: "10.11.202.1"
     vm_dns: "10.11.202.25 10.11.202.30 75.75.75.75"
