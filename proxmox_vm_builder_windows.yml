@@ -28,26 +28,14 @@
 
   tasks:
 
-    - name: Ensure Proxmox API is reachable
-      community.general.uri:
-        url: "https://{{ inventory_hostname }}:8006/api2/json/nodes"
-        user: "{{ pve_user }}"
-        password: "{{ pve_pass }}"
-        method: GET
-        validate_certs: no
-      register: proxmox_api
-      retries: 5
-      delay: 10
-      until: proxmox_api.status == 200
-
     - name: Clone the Windows template and configure VM resources
       community.proxmox.proxmox_vm:
         api_user: "{{ pve_user }}"
         api_password: "{{ pve_pass }}"
         api_host: "{{ inventory_hostname }}"
-        vmid: "{{ vm_new_vmid }}"       # New VMID from variable
+        vmid: "{{ vm_new_vmid }}"
         name: "{{ vm_name }}"
-        clone: "{{ vm_template_vmid }}" # Template VMID
+        clone: "{{ vm_template_vmid }}"
         full: true
         cores: "{{ vm_cores }}"
         memory: "{{ vm_memory }}"
