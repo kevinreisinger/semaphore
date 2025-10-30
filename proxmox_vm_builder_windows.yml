@@ -38,7 +38,7 @@
       delegate_to: localhost
 
     - name: 1.2. Clone Windows template and configure VM
-      community.general.proxmox_kvm:
+      community.proxmox.proxmox_kvm:
         api_host: "{{ pve_host }}"
         api_user: "{{ pve_user }}"
         api_password: "{{ pve_pass }}"
@@ -64,7 +64,7 @@
         PYTHONPATH: "/usr/lib/python3/dist-packages"
 
     - name: 1.3. Start the new VM
-      community.general.proxmox_kvm:
+      community.proxmox.proxmox_kvm:
         api_host: "{{ pve_host }}"
         api_user: "{{ pve_user }}"
         api_password: "{{ pve_pass }}"
@@ -102,8 +102,9 @@
         ansible_password: "{{ win_password }}"
       delegate_to: localhost
 
+
 # ==============================================================================
-# PLAY 2: Domain Join
+# PLAY 2: DOMAIN JOIN USING MICROSOFT.AD COLLECTION
 # ==============================================================================
 - name: 2. Configure and Join VM to Active Directory Domain
   hosts: newly_provisioned_windows
@@ -112,12 +113,13 @@
 
   tasks:
     - name: 2.1. Join VM to domain
-      ansible.windows.win_domain_membership:
+      microsoft.ad.membership:
         dns_domain_name: "{{ domain_name }}"
         hostname: "{{ vm_name }}"
         state: domain
-        domain_user: "{{ domain_user }}"
-        domain_password: "{{ domain_password }}"
+        domain_admin_user: "{{ domain_user }}"
+        domain_admin_password: "{{ domain_password }}"
+        reboot: true
         reboot_timeout: 1200
       register: domain_join_result
 
