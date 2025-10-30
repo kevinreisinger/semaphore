@@ -9,34 +9,6 @@
 # Execution Environment.
 # ==============================================================================
 
-# Global Variables for Proxmox and Windows Configuration
-vars:
-  # --- REQUIRED PROXMOX CREDENTIALS (API Access) ---
-  pve_host: "10.11.202.41" # IP of your Proxmox server
-  pve_user: ""            # REQUIRED: Proxmox API user (e.g., ansible_user@pve)
-  pve_pass: ""            # REQUIRED: Proxmox API password
-  pve_node: "pmve02"      # The specific Proxmox node to build the VM on
-  ansible_python_interpreter: /usr/bin/python3 # Explicitly set interpreter path
-
-  # --- NEW WINDOWS VM CONFIGURATION ---
-  vm_id: 101 # Unique ID for the new VM (ensure this doesn't conflict with existing IDs)
-  vm_name: "kevireis-dload"
-  template_id: 100 # ID of the existing Windows template with Cloudbase-Init (MANDATORY)
-  ip_address_cidr: "10.11.2021.14/24" # IP address with CIDR for the new VM
-  gateway: "10.11.202.1"
-  # NEW: DNS server IPs, space-separated, to be configured via Cloudbase-Init
-  dns_servers: "10.11.202.25 10.11.202.30 75.75.75.75"
-
-  # --- WINDOWS GUEST LOGIN (Used by Cloudbase-Init for first boot & initial config) ---
-  win_user: "Administrator" # Common default Windows user
-  win_password: "SecurePassword456" # Temporary password set during Cloudbase-Init
-
-  # --- DOMAIN JOIN CONFIGURATION (NEW) ---
-  domain_name: "REISINGERS"
-  domain_user: "" # REQUIRED: Domain administrator account (must be UPN format: user@domain)
-  domain_password: "" # REQUIRED: Password for the domain admin user
-
-
 # ==============================================================================
 # PLAY 1: PROVISION THE VM ON PROXMOX
 # ==============================================================================
@@ -45,6 +17,33 @@ vars:
   hosts: proxmox_hosts
   gather_facts: no
   connection: local
+
+  vars: # Global Variables moved inside the first play definition
+    # --- REQUIRED PROXMOX CREDENTIALS (API Access) ---
+    pve_host: "10.11.202.41" # IP of your Proxmox server
+    pve_user: ""            # REQUIRED: Proxmox API user (e.g., ansible_user@pve)
+    pve_pass: ""            # REQUIRED: Proxmox API password
+    pve_node: "pmve02"      # The specific Proxmox node to build the VM on
+    ansible_python_interpreter: /usr/bin/python3 # Explicitly set interpreter path
+
+    # --- NEW WINDOWS VM CONFIGURATION ---
+    vm_id: 101 # Unique ID for the new VM (ensure this doesn't conflict with existing IDs)
+    vm_name: "kevireis-dload"
+    template_id: 100 # ID of the existing Windows template with Cloudbase-Init (MANDATORY)
+    ip_address_cidr: "10.11.2021.14/24" # IP address with CIDR for the new VM
+    gateway: "10.11.202.1"
+    # NEW: DNS server IPs, space-separated, to be configured via Cloudbase-Init
+    dns_servers: "10.11.202.25 10.11.202.30 75.75.75.75"
+
+    # --- WINDOWS GUEST LOGIN (Used by Cloudbase-Init for first boot & initial config) ---
+    win_user: "Administrator" # Common default Windows user
+    win_password: "SecurePassword456" # Temporary password set during Cloudbase-Init
+
+    # --- DOMAIN JOIN CONFIGURATION (NEW) ---
+    domain_name: "REISINGERS"
+    domain_user: "" # REQUIRED: Domain administrator account (must be UPN format: user@domain)
+    domain_password: "" # REQUIRED: Password for the domain admin user
+
 
   tasks:
     - name: 1.1. Ensure Python dependencies are installed for Proxmox/WinRM (SEMAPHORE HACK)
