@@ -1,5 +1,5 @@
 - name: 1. Provision a New Windows VM on Proxmox VE
-  hosts: proxmox_hosts
+  hosts: pmve
   gather_facts: no
   connection: local
 
