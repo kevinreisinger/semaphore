@@ -4,10 +4,10 @@
   gather_facts: no
 
   vars:
-    source_share: '\\\\haos01\\backup'
-    destination_share: '\\\\kevireis-home\\i$\\Applications\\Haos\\Backup'
-    share_username: ''
-    share_password: ''
+    source_share: '\\haos01\backup'
+    destination_share: '\\kevireis-home\i$\Applications\Haos\Backup'
+    share_username: '' # Leave blank if using current user credentials
+    share_password: '' # Leave blank if using current user credentials
     mapped_drive_letter_src: 'X'
     mapped_drive_letter_dst: 'Y'
     max_backups_to_keep: 10
@@ -34,37 +34,62 @@
             [int]$max_backups_to_keep
           )
 
-          Write-Host "=== Starting HAOS backup copy process ==="
-
-          # Unmap any existing drives
-          cmd.exe /c "net use $mapped_drive_letter_src`: /delete /y" | Out-Null
-          cmd.exe /c "net use $mapped_drive_letter_dst`: /delete /y" | Out-Null
-
-          Write-Host "Mapping source share: $source_share"
-          cmd.exe /c "net use $mapped_drive_letter_src`: $source_share" | Out-Null
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "ERROR: Could not map source share."
-            exit 1
+          # --- Helper Functions for Clean Up ---
+          function UnmapDrive ([string]$driveLetter) {
+            Write-Host "Unmapping drive $($driveLetter):"
+            cmd.exe /c "net use $($driveLetter): /delete /y" | Out-Null
           }
 
+          function CleanupAndExit ([int]$exitCode) {
+            UnmapDrive $mapped_drive_letter_src
+            UnmapDrive $mapped_drive_letter_dst
+            exit $exitCode
+          }
+          # -------------------------------------
+
+          Write-Host "=== Starting HAOS backup copy process ==="
+
+          # Unmap any existing drives for a clean start
+          UnmapDrive $mapped_drive_letter_src
+          UnmapDrive $mapped_drive_letter_dst
+
+          # --- Map Source Drive ---
+          Write-Host "Mapping source share: $source_share"
+          cmd.exe /c "net use $($mapped_drive_letter_src): $source_share" | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "ERROR: Could not map source share."
+            CleanupAndExit 1
+          }
+
+          # --- Map Destination Drive ---
           Write-Host "Mapping destination share: $destination_share"
           if ([string]::IsNullOrWhiteSpace($share_username)) {
-            cmd.exe /c "net use $mapped_drive_letter_dst`: $destination_share" | Out-Null
+            # Map without explicit credentials
+            cmd.exe /c "net use $($mapped_drive_letter_dst): $destination_share" | Out-Null
           } else {
-            cmd.exe /c "net use $mapped_drive_letter_dst`: $destination_share $share_password /user:$share_username /persistent:no" | Out-Null
+            # Map with credentials
+            cmd.exe /c "net use $($mapped_drive_letter_dst): $destination_share $share_password /user:$share_username /persistent:no" | Out-Null
           }
 
           if ($LASTEXITCODE -ne 0) {
             Write-Host "ERROR: Could not map destination share."
-            cmd.exe /c "net use $mapped_drive_letter_src`: /delete /y" | Out-Null
-            exit 1
+            CleanupAndExit 1
           }
 
-          Write-Host "Copying files..."
-          robocopy "$mapped_drive_letter_src`:\\" "$mapped_drive_letter_dst`:\\" /E /R:1 /W:3 /NFL /NDL /NP /LOG+:C:\Temp\HAOS_Backup_Copy.log"
+          # --- Copy Files (FIXED QUOTING HERE) ---
+          Write-Host "Copying files from $($mapped_drive_letter_src):\ to $($mapped_drive_letter_dst):\"
+          # Using $($var):\. ensures we copy contents of the root of the mapped drive.
+          # The trailing double quote has been removed from the /LOG+ argument.
+          robocopy "$($mapped_drive_letter_src):\." "$($mapped_drive_letter_dst):\." /E /R:1 /W:3 /NFL /NDL /NP /LOG+:C:\Temp\HAOS_Backup_Copy.log
 
-          Write-Host "Applying retention policy..."
-          $backups = Get-ChildItem -Path "$mapped_drive_letter_dst`:\" -Include *.tar, *.tar.gz, *.zip -Recurse | Sort-Object LastWriteTime -Descending
+          if ($LASTEXITCODE -gt 7) { # Robocopy error codes > 7 indicate critical failures
+            Write-Host "ERROR: Robocopy failed with exit code $LASTEXITCODE."
+            CleanupAndExit 1
+          }
+
+          # --- Apply Retention Policy ---
+          Write-Host "Applying retention policy (keeping $max_backups_to_keep latest backups)..."
+          $backups = Get-ChildItem -Path "$($mapped_drive_letter_dst):\" -Include *.tar, *.tar.gz, *.zip -File -Recurse | Sort-Object LastWriteTime -Descending
 
           if ($backups.Count -gt $max_backups_to_keep) {
             $toDelete = $backups | Select-Object -Skip $max_backups_to_keep
@@ -74,8 +99,7 @@
             }
           }
 
-          Write-Host "Cleaning up..."
-          cmd.exe /c "net use $mapped_drive_letter_src`: /delete /y" | Out-Null
-          cmd.exe /c "net use $mapped_drive_letter_dst`: /delete /y" | Out-Null
+          # --- Cleanup and Finish ---
+          CleanupAndExit 0
 
           Write-Host "=== HAOS backup copy completed successfully ==="
