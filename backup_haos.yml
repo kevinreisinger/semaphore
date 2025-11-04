@@ -4,22 +4,22 @@
   gather_facts: no
 
   vars:
+    # NOTE: These variables are now used as direct UNC paths
     source_share: '\\haos01\backup'
     destination_share: '\\kevireis-home\i$\Applications\Haos\Backup'
-    share_username: '' # Leave blank if using current user credentials
-    share_password: '' # Leave blank if using current user credentials
-    mapped_drive_letter_src: 'X'
+    share_username: '' # Provide username if needed for authentication
+    share_password: '' # Provide password if needed for authentication
+    # Mapped drive letters are now deprecated in the script, but left in vars for easy reference
+    mapped_drive_letter_src: 'X' 
     mapped_drive_letter_dst: 'Y'
     max_backups_to_keep: 10
 
   tasks:
-    - name: Copy HAOS backups from source to destination
+    - name: Copy HAOS backups via UNC paths and apply retention
       ansible.windows.win_powershell:
         parameters:
           source_share: "{{ source_share }}"
           destination_share: "{{ destination_share }}"
-          mapped_drive_letter_src: "{{ mapped_drive_letter_src }}"
-          mapped_drive_letter_dst: "{{ mapped_drive_letter_dst }}"
           share_username: "{{ share_username }}"
           share_password: "{{ share_password }}"
           max_backups_to_keep: "{{ max_backups_to_keep }}"
@@ -27,82 +27,67 @@
           param(
             [string]$source_share,
             [string]$destination_share,
-            [string]$mapped_drive_letter_src,
-            [string]$mapped_drive_letter_dst,
             [string]$share_username,
             [string]$share_password,
             [int]$max_backups_to_keep
           )
 
-          # --- Helper Functions for Clean Up ---
-          function UnmapDrive ([string]$driveLetter) {
-            cmd.exe /c "net use $($driveLetter): /delete /y" | Out-Null
+          Write-Host "=== Starting HAOS backup copy process (UNC Method) ==="
+
+          $source_path = $source_share
+          $destination_path = $destination_share
+
+          # --- Step 1: Handle Authentication (If credentials provided) ---
+          if (-not [string]::IsNullOrWhiteSpace($share_username)) {
+            Write-Host "Authenticating UNC paths using provided credentials..."
+            try {
+                # Create a network credential object for the session
+                $credential = New-Object System.Net.NetworkCredential($share_username, $share_password)
+                
+                # NOTE: This uses the net use command *without* a drive letter 
+                # to authenticate the current session context for the UNC path.
+                cmd.exe /c "net use $source_share /user:$share_username $share_password" | Out-Null
+                cmd.exe /c "net use $destination_share /user:$share_username $share_password" | Out-Null
+
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "FATAL ERROR: Failed to authenticate to network share (Net Use Exit Code $LASTEXITCODE)."
+                    exit 1
+                }
+            }
+            catch {
+                Write-Host "FATAL ERROR: Failed to create network credentials or authenticate."
+                exit 1
+            }
+          } else {
+            Write-Host "No credentials provided. Copying using current WinRM user context."
           }
 
-          function CleanupAndExit ([int]$exitCode, [string]$logPath) {
-            Write-Host "Cleaning up mapped drives..."
-            UnmapDrive $mapped_drive_letter_src
-            UnmapDrive $mapped_drive_letter_dst
-            exit $exitCode
-          }
-          # -------------------------------------
 
+          # --- Step 2: Copy Files using Robocopy (UNC to UNC) ---
           $robocopy_log = "C:\Temp\HAOS_Backup_Copy_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
           
-          # CRITICAL CHANGE: Define paths without the final trailing backslash.
-          $source_path = "$($mapped_drive_letter_src):"
-          $destination_path = "$($mapped_drive_letter_dst):"
-          
-          Write-Host "=== Starting HAOS backup copy process ==="
-
-          # Unmap any existing drives for a clean start
-          UnmapDrive $mapped_drive_letter_src
-          UnmapDrive $mapped_drive_letter_dst
-
-          # --- Map Source Drive (X:) ---
-          Write-Host "Mapping source share: $source_share"
-          cmd.exe /c "net use $($mapped_drive_letter_src): $source_share" | Out-Null
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "ERROR: Failed to map source share (Net Use Exit Code $LASTEXITCODE)"
-            CleanupAndExit 1 $robocopy_log
-          }
-
-          # --- Map Destination Drive (Y:) ---
-          Write-Host "Mapping destination share: $destination_share"
-          if ([string]::IsNullOrWhiteSpace($share_username)) {
-            cmd.exe /c "net use $($mapped_drive_letter_dst): $destination_share" | Out-Null
-          } else {
-            cmd.exe /c "net use $($mapped_drive_letter_dst): $destination_share $share_password /user:$share_username /persistent:no" | Out-Null
-          }
-
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "ERROR: Failed to map destination share (Net Use Exit Code $LASTEXITCODE)"
-            CleanupAndExit 1 $robocopy_log
-          }
-
-          # --- Copy Files ---
           Write-Host "Executing robocopy from $source_path to $destination_path..."
           
-          # /E for subdirs, /R:1 /W:3 for retries, /V verbose, /NP no progress bar, /LOG+ for append
+          # CRITICAL: Using UNC paths directly. /E for subdirs, /R:1 /W:3 for retries, /V verbose, /NP no progress bar, /LOG+ for append
           robocopy $source_path $destination_path /E /R:1 /W:3 /V /NP /LOG+:$robocopy_log
 
           $robocopy_exit_code = $LASTEXITCODE
           Write-Host "Robocopy finished with exit code $robocopy_exit_code."
           
-          # CRITICAL CHECK: Fail the Ansible task if Robocopy failed due to permissions (Exit Code 5)
+          # CRITICAL CHECK: Fail the Ansible task if Robocopy failed due to critical errors
           if ($robocopy_exit_code -eq 5) {
             Write-Host "FATAL ERROR (Access Denied): Robocopy failed due to a permissions error. (Code 5)."
-            CleanupAndExit 1 $robocopy_log
+            exit 1
           }
           
-          # Robocopy codes 0-7 are considered success/non-critical failure. Only exit > 7 is a critical error.
           if ($robocopy_exit_code -gt 7) { 
             Write-Host "FATAL ERROR: Robocopy failed due to a critical error (Code $robocopy_exit_code)."
-            CleanupAndExit 1 $robocopy_log
+            exit 1
           }
 
-          # --- Apply Retention Policy ---
-          Write-Host "Applying retention policy (keeping $max_backups_to_keep latest backups)..."
+          # --- Step 3: Apply Retention Policy ---
+          Write-Host "Applying retention policy (keeping $max_backups_to_keep latest backups) on $destination_path..."
+          # NOTE: Using the UNC destination path directly here
           $backups = Get-ChildItem -Path $destination_path -Include *.tar, *.tar.gz, *.zip -File -Recurse | Sort-Object LastWriteTime -Descending
 
           if ($backups.Count -gt $max_backups_to_keep) {
@@ -113,6 +98,13 @@
             }
           }
 
+          # --- Step 4: Clean Up Authentication Session ---
+          if (-not [string]::IsNullOrWhiteSpace($share_username)) {
+            Write-Host "Cleaning up network authentication..."
+            cmd.exe /c "net use $source_share /delete" | Out-Null
+            cmd.exe /c "net use $destination_share /delete" | Out-Null
+          }
+
           Write-Host "=== HAOS backup copy completed successfully ==="
           
-          CleanupAndExit 0 $robocopy_log
+          exit 0
