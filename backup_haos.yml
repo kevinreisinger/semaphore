@@ -18,12 +18,12 @@
         script: |
           # --- Config pulled from Ansible vars ---
           $SourceShare = @'
-{{ source_share }}
-'@
+          {{ source_share }}
+          '@
 
           $DestinationShare = @'
-{{ destination_share }}
-'@
+          {{ destination_share }}
+          '@
 
           $MappedSrc = '{{ mapped_drive_letter_src }}'
           $MappedDst = '{{ mapped_drive_letter_dst }}'
