@@ -13,7 +13,7 @@
     max_backups_to_keep: 10
 
   tasks:
-    - name: Copy HAOS backups from source to destination (Forced Log Output)
+    - name: Copy HAOS backups from source to destination (Output Stream Fix)
       ansible.windows.win_powershell:
         parameters:
           source_share: "{{ source_share }}"
@@ -108,12 +108,16 @@
           $robocopy_exit_code = $LASTEXITCODE
           Write-Host "Robocopy finished with exit code $robocopy_exit_code."
 
-          # --- FORCED LOG STATS OUTPUT ---
+          # --- FORCED LOG STATS OUTPUT (Now using Write-Output) ---
           if (Test-Path $robocopy_log) {
+              # Write the start boundary to the host console (less critical)
               Write-Host "--- ROBOCOPY STATS (Exit Code $robocopy_exit_code) ---"
+
               # Filter for the key summary lines (Files, Dirs, Total Bytes)
-              $summary_lines = Get-Content $robocopy_log | Select-String -Pattern '(Files|Dirs|Total)' | Out-String
-              Write-Host $summary_lines
+              # Crucial: Use Write-Output to force data into the Ansible return value
+              Get-Content $robocopy_log | Select-String -Pattern '(Files|Dirs|Total)' | Write-Output
+              
+              # Write the end boundary to the host console
               Write-Host "------------------------------------------------------"
           }
 
