@@ -17,8 +17,14 @@
       ansible.windows.win_powershell:
         script: |
           # --- Config pulled from Ansible vars ---
-          $SourceShare = @'{{ source_share }}'@
-          $DestinationShare = @'{{ destination_share }}'@
+          $SourceShare = @'
+{{ source_share }}
+'@
+
+          $DestinationShare = @'
+{{ destination_share }}
+'@
+
           $MappedSrc = '{{ mapped_drive_letter_src }}'
           $MappedDst = '{{ mapped_drive_letter_dst }}'
           $ShareUser = '{{ share_username }}'
@@ -53,7 +59,8 @@
           Write-Host "Copying files from ${MappedSrc}: to ${MappedDst}: ..."
           try {
               robocopy "${MappedSrc}:\\" "${MappedDst}:\\" /E /COPYALL /R:1 /W:3 /NFL /NDL /NP /LOG+:C:\Temp\HAOS_Backup_Copy.log"
-          } catch {
+          }
+          catch {
               Write-Host "ERROR: Copy failed. $($_.Exception.Message)"
               exit 1
           }
