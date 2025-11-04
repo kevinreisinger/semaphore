@@ -15,14 +15,6 @@
   tasks:
     - name: Execute HAOS Network Copy Script (PowerShell)
       ansible.windows.win_powershell:
-        args:
-          source_share: "{{ source_share }}"
-          destination_share: "{{ destination_share }}"
-          mapped_drive_letter_src: "{{ mapped_drive_letter_src }}"
-          mapped_drive_letter_dst: "{{ mapped_drive_letter_dst }}"
-          share_username: "{{ share_username | default('') }}"
-          share_password: "{{ share_password | default('') }}"
-          max_backups_to_keep: "{{ max_backups_to_keep }}"
         script: |
           param(
             [string]$source_share,
@@ -81,3 +73,12 @@
           cmd.exe /c "net use ${mapped_drive_letter_dst}: /delete /y" | Out-Null
 
           Write-Host "HAOS backup copy completed successfully."
+
+        parameters:
+          source_share: "{{ source_share }}"
+          destination_share: "{{ destination_share }}"
+          mapped_drive_letter_src: "{{ mapped_drive_letter_src }}"
+          mapped_drive_letter_dst: "{{ mapped_drive_letter_dst }}"
+          share_username: "{{ share_username }}"
+          share_password: "{{ share_password }}"
+          max_backups_to_keep: "{{ max_backups_to_keep }}"
