@@ -13,7 +13,7 @@
     max_backups_to_keep: 10
 
   tasks:
-    - name: Copy HAOS backups from source to destination (Forced Failure Check)
+    - name: Copy HAOS backups from source to destination
       ansible.windows.win_powershell:
         parameters:
           source_share: "{{ source_share }}"
@@ -39,16 +39,10 @@
             cmd.exe /c "net use $($driveLetter): /delete /y" | Out-Null
           }
 
-          function CleanupAndExit ([int]$exitCode, [string]$logPath, $diagData) {
+          function CleanupAndExit ([int]$exitCode, [string]$logPath) {
             Write-Host "Cleaning up mapped drives..."
             UnmapDrive $mapped_drive_letter_src
             UnmapDrive $mapped_drive_letter_dst
-            
-            # Write diagnostic data for structured capture
-            if ($diagData) {
-                Write-Output $diagData
-            }
-
             exit $exitCode
           }
           # -------------------------------------
@@ -57,19 +51,6 @@
           $source_path = "$($mapped_drive_letter_src):\"
           $destination_path = "$($mapped_drive_letter_dst):\"
           
-          # Initialize diagnostic data structure
-          $diag = @{
-              Status = "Initializing"
-              SourceShare = $source_share
-              DestinationShare = $destination_share
-              SourcePath = $source_path
-              DestinationPath = $destination_path
-              SourceItemCount = 0
-              RobocopyExitCode = "N/A"
-              RobocopyLog = $robocopy_log
-              RobocopyStats = "N/A"
-          } | ConvertTo-Json
-
           Write-Host "=== Starting HAOS backup copy process ==="
 
           # Unmap any existing drives for a clean start
@@ -80,8 +61,8 @@
           Write-Host "Mapping source share: $source_share"
           cmd.exe /c "net use $($mapped_drive_letter_src): $source_share" | Out-Null
           if ($LASTEXITCODE -ne 0) {
-            $diag.Status = "ERROR: Failed to map source share (Net Use Exit Code $LASTEXITCODE)"
-            CleanupAndExit 1 $robocopy_log $diag
+            Write-Host "ERROR: Failed to map source share (Net Use Exit Code $LASTEXITCODE)"
+            CleanupAndExit 1 $robocopy_log
           }
 
           # --- Map Destination Drive (Y:) ---
@@ -93,53 +74,24 @@
           }
 
           if ($LASTEXITCODE -ne 0) {
-            $diag.Status = "ERROR: Failed to map destination share (Net Use Exit Code $LASTEXITCODE)"
-            CleanupAndExit 1 $robocopy_log $diag
+            Write-Host "ERROR: Failed to map destination share (Net Use Exit Code $LASTEXITCODE)"
+            CleanupAndExit 1 $robocopy_log
           }
 
-          # --- Source Content Check ---
-          try {
-            Write-Host "--- Source Path: $source_path ---"
-            $source_items = Get-ChildItem -Path $source_path -Force -ErrorAction Stop
-            
-            # Find files that are likely backups
-            $backup_files = $source_items | Where-Object { $_.PSIsContainer -eq $false -and $_.Name -match '\.(tar|tar\.gz|zip)$' }
-            
-            $diag.SourceItemCount = $backup_files.Count
-            $diag.Status = "Source check passed. Found $($diag.SourceItemCount) backup files."
-            Write-Host "Found $($diag.SourceItemCount) files that look like backups on source drive."
-            
-            # CRITICAL FAILURE CHECK: If no files are found, force a fatal Ansible failure
-            if ($diag.SourceItemCount -eq 0) {
-                Write-Host "FATAL ERROR (EXIT 99): No backup files found at source drive $source_path. Check folder contents on $source_share."
-                CleanupAndExit 99 $robocopy_log $diag # Exit with a non-zero code to fail the Ansible task
-            }
-          }
-          catch {
-            $diag.Status = "FATAL: Could not read source directory $source_path. Check permissions on $source_share."
-            CleanupAndExit 1 $robocopy_log $diag
-          }
-
-          # --- Copy Files (Only runs if SourceItemCount > 0) ---
+          # --- Copy Files ---
           Write-Host "Executing robocopy from $source_path to $destination_path..."
-          # /E for subdirs, /R:1 /W:3 for retries, /V verbose, /NP no progress bar, /LOG+ for append
-          robocopy $source_path $destination_path /E /R:1 /W:3 /V /NFL /NDL /NP /LOG+:$robocopy_log
-          $robocopy_exit_code = $LASTEXITCODE
           
-          $diag.RobocopyExitCode = $robocopy_exit_code
+          # CRITICAL CHANGE: Using a wildcard *.* for files to ensure matching, and /E for subdirectories.
+          # /R:1 /W:3 for retries, /V verbose, /NP no progress bar, /LOG+ for append
+          robocopy $source_path $destination_path /E /R:1 /W:3 /V /NP /LOG+:$robocopy_log
 
+          $robocopy_exit_code = $LASTEXITCODE
           Write-Host "Robocopy finished with exit code $robocopy_exit_code."
-
-          # --- Capture Robocopy Log Statistics ---
-          if (Test-Path $robocopy_log) {
-              # Filter for the key summary lines (Files, Dirs, Total Bytes) and store them
-              $summary_lines = Get-Content $robocopy_log | Select-String -Pattern '(Files|Dirs|Total)' | Out-String
-              $diag.RobocopyStats = $summary_lines.Trim()
-          }
-
-          if ($robocopy_exit_code -gt 7) { # Robocopy error codes > 7 indicate critical failures
-            $diag.Status = "FATAL ERROR: Robocopy failed due to a critical error."
-            CleanupAndExit 1 $robocopy_log $diag
+          
+          # Robocopy codes 0-7 are considered success/non-critical failure. Only exit > 7 is a critical error.
+          if ($robocopy_exit_code -gt 7) { 
+            Write-Host "FATAL ERROR: Robocopy failed due to a critical error (Code $robocopy_exit_code)."
+            CleanupAndExit 1 $robocopy_log
           }
 
           # --- Apply Retention Policy ---
@@ -154,8 +106,6 @@
             }
           }
 
-          $diag.Status = "SUCCESS: Backup completed and retention policy applied."
           Write-Host "=== HAOS backup copy completed successfully ==="
           
-          # Final successful cleanup and exit, returning the diagnostic data
-          CleanupAndExit 0 $robocopy_log $diag
+          CleanupAndExit 0 $robocopy_log
