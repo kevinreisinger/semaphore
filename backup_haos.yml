@@ -13,7 +13,7 @@
     max_backups_to_keep: 10
 
   tasks:
-    - name: Copy HAOS backups from source to destination (Final Debugging)
+    - name: Copy HAOS backups from source to destination (Forced Log Output)
       ansible.windows.win_powershell:
         parameters:
           source_share: "{{ source_share }}"
@@ -44,8 +44,8 @@
             Write-Host "Cleaning up mapped drives..."
             UnmapDrive $mapped_drive_letter_src
             UnmapDrive $mapped_drive_letter_dst
-
-            # Only dump full log on critical failure
+            
+            # Dump full log only on critical failure
             if ($exitCode -gt 7 -and (Test-Path $logPath)) {
                 Write-Host "--- CRITICAL FAILURE LOG DUMP START ---"
                 Get-Content $logPath
@@ -60,9 +60,6 @@
           $destination_path = "$($mapped_drive_letter_dst):\"
 
           Write-Host "=== Starting HAOS backup copy process ==="
-          Write-Host "Source Share: $source_share (Mapped to $source_path)"
-          Write-Host "Dest Share: $destination_share (Mapped to $destination_path)"
-          Write-Host "Robocopy log will be saved to: $robocopy_log"
 
           # Unmap any existing drives for a clean start
           UnmapDrive $mapped_drive_letter_src
@@ -73,7 +70,7 @@
           cmd.exe /c "net use $($mapped_drive_letter_src): $source_share" | Out-Null
           if ($LASTEXITCODE -ne 0) {
             Write-Host "ERROR: Could not map source share. Net Use Exit Code: $LASTEXITCODE"
-            CleanupAndExit 1
+            CleanupAndExit 1 $robocopy_log
           }
 
           # --- Map Destination Drive (Y:) ---
@@ -86,40 +83,38 @@
 
           if ($LASTEXITCODE -ne 0) {
             Write-Host "ERROR: Could not map destination share. Net Use Exit Code: $LASTEXITCODE"
-            CleanupAndExit 1
+            CleanupAndExit 1 $robocopy_log
           }
 
           # --- Source Content Check ---
           try {
-            Write-Host "Checking $source_path for files/folders..."
-            # Check for any items, not just files, to confirm map integrity
-            $source_items = Get-ChildItem -Path $source_path -ErrorAction Stop
-
+            Write-Host "--- Source Path: $source_path ---"
+            $source_items = Get-ChildItem -Path $source_path -Force -ErrorAction Stop
+            Write-Host "Found $($source_items.Count) items on source drive."
             if (-not $source_items) {
                 Write-Host "WARNING: The mapped source drive $source_path appears to be empty."
-            } else {
-                Write-Host "Mapped drive $source_path contains $($source_items.Count) items. Starting copy..."
             }
           }
           catch {
-            Write-Host "ERROR: Could not read source directory $source_path. Possible permission issue."
-            CleanupAndExit 1
+            Write-Host "FATAL: Could not read source directory $source_path. Check permissions on $source_share."
+            CleanupAndExit 1 $robocopy_log
           }
 
           # --- Copy Files ---
           Write-Host "Executing robocopy from $source_path to $destination_path..."
-          # /V for verbose, /E for subdirs, /R:1 /W:3 for retries, /NP no progress bar, /LOG+ for append
-          robocopy "$source_path" "$destination_path" /E /R:1 /W:3 /V /NFL /NDL /NP /LOG+:$robocopy_log
+          # /E for subdirs, /R:1 /W:3 for retries, /V verbose, /NP no progress bar, /LOG+ for append
+          robocopy $source_path $destination_path /E /R:1 /W:3 /V /NFL /NDL /NP /LOG+:$robocopy_log
 
           $robocopy_exit_code = $LASTEXITCODE
           Write-Host "Robocopy finished with exit code $robocopy_exit_code."
 
-          # Always show the log summary for verification if robocopy ran
+          # --- FORCED LOG STATS OUTPUT ---
           if (Test-Path $robocopy_log) {
-              Write-Host "--- ROBOCY COPY LOG SUMMARY START (Exit Code $robocopy_exit_code) ---"
-              # Print the last 20 lines which contain the file transfer summary
-              Get-Content $robocopy_log | Select-Object -Last 20
-              Write-Host "--- ROBOCY COPY LOG SUMMARY END ---"
+              Write-Host "--- ROBOCOPY STATS (Exit Code $robocopy_exit_code) ---"
+              # Filter for the key summary lines (Files, Dirs, Total Bytes)
+              $summary_lines = Get-Content $robocopy_log | Select-String -Pattern '(Files|Dirs|Total)' | Out-String
+              Write-Host $summary_lines
+              Write-Host "------------------------------------------------------"
           }
 
           if ($robocopy_exit_code -gt 7) { # Robocopy error codes > 7 indicate critical failures
@@ -129,7 +124,6 @@
 
           # --- Apply Retention Policy ---
           Write-Host "Applying retention policy (keeping $max_backups_to_keep latest backups)..."
-          # Retention policy is applied only to the destination root of the mapped drive
           $backups = Get-ChildItem -Path $destination_path -Include *.tar, *.tar.gz, *.zip -File -Recurse | Sort-Object LastWriteTime -Descending
 
           if ($backups.Count -gt $max_backups_to_keep) {
@@ -141,4 +135,4 @@
           }
 
           Write-Host "=== HAOS backup copy completed successfully ==="
-          CleanupAndExit 0
+          CleanupAndExit 0 $robocopy_log
