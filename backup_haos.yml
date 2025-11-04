@@ -15,69 +15,69 @@
   tasks:
     - name: Execute HAOS Network Copy Script (PowerShell)
       ansible.windows.win_powershell:
+        args:
+          source_share: "{{ source_share }}"
+          destination_share: "{{ destination_share }}"
+          mapped_drive_letter_src: "{{ mapped_drive_letter_src }}"
+          mapped_drive_letter_dst: "{{ mapped_drive_letter_dst }}"
+          share_username: "{{ share_username | default('') }}"
+          share_password: "{{ share_password | default('') }}"
+          max_backups_to_keep: "{{ max_backups_to_keep }}"
         script: |
-          # --- Config pulled from Ansible vars ---
-          $SourceShare = '{{ source_share | replace("\", "\\") }}'
-          $DestinationShare = '{{ destination_share | replace("\", "\\") }}'
-          $MappedSrc = '{{ mapped_drive_letter_src }}'
-          $MappedDst = '{{ mapped_drive_letter_dst }}'
-          $ShareUser = '{{ share_username | default("") }}'
-          $SharePass = '{{ share_password | default("") }}'
-          $MaxKeep = [int]{{ max_backups_to_keep }}
+          param(
+            [string]$source_share,
+            [string]$destination_share,
+            [string]$mapped_drive_letter_src,
+            [string]$mapped_drive_letter_dst,
+            [string]$share_username,
+            [string]$share_password,
+            [int]$max_backups_to_keep
+          )
 
           Write-Host "=== Starting HAOS backup copy process ==="
 
-          # --- 1. Clean up any previous mappings ---
-          cmd.exe /c "net use ${MappedSrc}: /delete /y" | Out-Null
-          cmd.exe /c "net use ${MappedDst}: /delete /y" | Out-Null
+          cmd.exe /c "net use ${mapped_drive_letter_src}: /delete /y" | Out-Null
+          cmd.exe /c "net use ${mapped_drive_letter_dst}: /delete /y" | Out-Null
 
-          # --- 2. Map both network shares ---
-          Write-Host "Mapping source: ${MappedSrc}: to $SourceShare ..."
-          cmd.exe /c "net use ${MappedSrc}: `"$SourceShare`"" | Out-Null
+          Write-Host "Mapping source: ${mapped_drive_letter_src}: to $source_share ..."
+          cmd.exe /c "net use ${mapped_drive_letter_src}: `"$source_share`"" | Out-Null
+
           if ($LASTEXITCODE -ne 0) {
               Write-Host "ERROR: Failed to map source share."
               exit 1
           }
 
-          Write-Host "Mapping destination: ${MappedDst}: to $DestinationShare ..."
-          if ([string]::IsNullOrWhiteSpace($ShareUser)) {
-              cmd.exe /c "net use ${MappedDst}: `"$DestinationShare`"" | Out-Null
+          Write-Host "Mapping destination: ${mapped_drive_letter_dst}: to $destination_share ..."
+          if ([string]::IsNullOrWhiteSpace($share_username)) {
+              cmd.exe /c "net use ${mapped_drive_letter_dst}: `"$destination_share`"" | Out-Null
           } else {
-              cmd.exe /c "net use ${MappedDst}: `"$DestinationShare`" `"$SharePass`" /user:`"$ShareUser`" /persistent:no" | Out-Null
+              cmd.exe /c "net use ${mapped_drive_letter_dst}: `"$destination_share`" `"$share_password`" /user:`"$share_username`" /persistent:no" | Out-Null
           }
 
           if ($LASTEXITCODE -ne 0) {
               Write-Host "ERROR: Failed to map destination share."
-              cmd.exe /c "net use ${MappedSrc}: /delete /y" | Out-Null
+              cmd.exe /c "net use ${mapped_drive_letter_src}: /delete /y" | Out-Null
               exit 1
           }
 
           Write-Host "Network shares mapped successfully."
 
-          # --- 3. Copy files from source to destination ---
-          Write-Host "Copying files from ${MappedSrc}: to ${MappedDst}: ..."
-          try {
-              robocopy "${MappedSrc}:\\" "${MappedDst}:\\" /E /COPYALL /R:1 /W:3 /NFL /NDL /NP /LOG+:C:\Temp\HAOS_Backup_Copy.log"
-          } catch {
-              Write-Host "ERROR: Copy failed: $($_.Exception.Message)"
-              exit 1
-          }
+          Write-Host "Copying files from ${mapped_drive_letter_src}: to ${mapped_drive_letter_dst}: ..."
+          robocopy "${mapped_drive_letter_src}:\\" "${mapped_drive_letter_dst}:\\" /E /COPYALL /R:1 /W:3 /NFL /NDL /NP /LOG+:C:\Temp\HAOS_Backup_Copy.log"
 
-          # --- 4. Retention policy ---
-          Write-Host "Applying retention policy (keep last $MaxKeep backups)..."
-          $backups = Get-ChildItem -Path "${MappedDst}:\\" -Recurse -Include "*.tar", "*.tar.gz", "*.zip" |
+          Write-Host "Applying retention policy (keep last $max_backups_to_keep backups)..."
+          $backups = Get-ChildItem -Path "${mapped_drive_letter_dst}:\\" -Recurse -Include "*.tar", "*.tar.gz", "*.zip" |
                       Sort-Object LastWriteTime -Descending
-          if ($backups.Count -gt $MaxKeep) {
-              $toDelete = $backups | Select-Object -Skip $MaxKeep
+
+          if ($backups.Count -gt $max_backups_to_keep) {
+              $toDelete = $backups | Select-Object -Skip $max_backups_to_keep
               foreach ($file in $toDelete) {
                   Write-Host "Deleting old backup: $($file.FullName)"
                   Remove-Item $file.FullName -Force -ErrorAction SilentlyContinue
               }
           }
 
-          # --- 5. Cleanup ---
-          Write-Host "Cleaning up network drives..."
-          cmd.exe /c "net use ${MappedSrc}: /delete /y" | Out-Null
-          cmd.exe /c "net use ${MappedDst}: /delete /y" | Out-Null
+          cmd.exe /c "net use ${mapped_drive_letter_src}: /delete /y" | Out-Null
+          cmd.exe /c "net use ${mapped_drive_letter_dst}: /delete /y" | Out-Null
 
           Write-Host "HAOS backup copy completed successfully."
