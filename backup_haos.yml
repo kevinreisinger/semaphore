@@ -13,7 +13,7 @@
     max_backups_to_keep: 10
 
   tasks:
-    - name: Copy HAOS backups from source to destination (Structured Diagnostics)
+    - name: Copy HAOS backups from source to destination (Forced Failure Check)
       ansible.windows.win_powershell:
         parameters:
           source_share: "{{ source_share }}"
@@ -36,7 +36,6 @@
 
           # --- Helper Functions for Clean Up ---
           function UnmapDrive ([string]$driveLetter) {
-            Write-Host "Unmapping drive $($driveLetter):"
             cmd.exe /c "net use $($driveLetter): /delete /y" | Out-Null
           }
 
@@ -45,17 +44,11 @@
             UnmapDrive $mapped_drive_letter_src
             UnmapDrive $mapped_drive_letter_dst
             
-            # If we have structured diagnostic data, write it to the output stream
+            # Write diagnostic data for structured capture
             if ($diagData) {
                 Write-Output $diagData
             }
 
-            # Dump full log only on critical failure
-            if ($exitCode -gt 7 -and (Test-Path $logPath)) {
-                Write-Host "--- CRITICAL FAILURE LOG DUMP START ---"
-                Get-Content $logPath
-                Write-Host "--- CRITICAL FAILURE LOG DUMP END ---"
-            }
             exit $exitCode
           }
           # -------------------------------------
@@ -116,8 +109,10 @@
             $diag.Status = "Source check passed. Found $($diag.SourceItemCount) backup files."
             Write-Host "Found $($diag.SourceItemCount) files that look like backups on source drive."
             
+            # CRITICAL FAILURE CHECK: If no files are found, force a fatal Ansible failure
             if ($diag.SourceItemCount -eq 0) {
-                Write-Host "WARNING: The mapped source drive $source_path appears to contain no backup files matching *.tar, *.tar.gz, or *.zip."
+                Write-Host "FATAL ERROR (EXIT 99): No backup files found at source drive $source_path. Check folder contents on $source_share."
+                CleanupAndExit 99 $robocopy_log $diag # Exit with a non-zero code to fail the Ansible task
             }
           }
           catch {
@@ -125,7 +120,7 @@
             CleanupAndExit 1 $robocopy_log $diag
           }
 
-          # --- Copy Files ---
+          # --- Copy Files (Only runs if SourceItemCount > 0) ---
           Write-Host "Executing robocopy from $source_path to $destination_path..."
           # /E for subdirs, /R:1 /W:3 for retries, /V verbose, /NP no progress bar, /LOG+ for append
           robocopy $source_path $destination_path /E /R:1 /W:3 /V /NFL /NDL /NP /LOG+:$robocopy_log
