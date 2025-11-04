@@ -31,26 +31,28 @@
 
           $source_path = $source_share
           $destination_path = $destination_share
-          $robocopy_log = "C:\Temp\HAOS_Backup_Copy_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
+          $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+          
+          # CRITICAL FIX: Ensure the temp directory exists before Robocopy tries to log
+          if (-not (Test-Path -Path C:\Temp)) {
+              New-Item -Path C:\Temp -ItemType Directory | Out-Null
+              Write-Host "Created C:\Temp directory for logging."
+          }
+          
+          $robocopy_log = "C:\Temp\HAOS_Backup_Copy_$timestamp.log"
           $robocopy_exit_code = 0 # Initialize
 
           Write-Host "=== Starting HAOS backup copy process (UNC Method) ==="
+          Write-Host "Log file target: $robocopy_log"
 
           # --- Step 1: Handle Authentication (If credentials provided) ---
           if (-not [string]::IsNullOrWhiteSpace($share_username)) {
             Write-Host "Authenticating UNC paths using provided credentials..."
-            try {
-                # This uses net use command *without* a drive letter to authenticate the current session context.
-                cmd.exe /c "net use $source_share /user:$share_username $share_password" | Out-Null
-                cmd.exe /c "net use $destination_share /user:$share_username $share_password" | Out-Null
+            cmd.exe /c "net use $source_share /user:$share_username $share_password" | Out-Null
+            cmd.exe /c "net use $destination_share /user:$share_username $share_password" | Out-Null
 
-                if ($LASTEXITCODE -ne 0) {
-                    Write-Host "FATAL ERROR: Failed to authenticate to network share (Net Use Exit Code $LASTEXITCODE). Proceeding to final failure dump."
-                    $robocopy_exit_code = 99
-                }
-            }
-            catch {
-                Write-Host "FATAL ERROR: Failed to handle network authentication. Proceeding to final failure dump."
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "FATAL ERROR: Failed to authenticate to network share (Net Use Exit Code $LASTEXITCODE). Forcing final failure dump."
                 $robocopy_exit_code = 99
             }
           } else {
@@ -96,28 +98,25 @@
 
           # --- Step 5: FINAL DIAGNOSTIC DUMP (Forcing Failure to See Output) ---
           
-          $logContent = Get-Content $robocopy_log -ErrorAction SilentlyContinue | Out-String
-          
-          # This message includes all the critical status information
-          $diagnosticMessage = @"
-          --- TASK DIAGNOSTICS DUMP ---
-          Status: Robocopy returned code $robocopy_exit_code. 
-          If code is 0/1/3, the copy ran but found nothing or skipped existing files.
-          If code is 5 (Access Denied) or >7 (Critical Error), the copy failed.
-          
-          ROBOCOPY LOG CONTENTS:
-          $logContent
-          --- END ROBOCOPY LOG CONTENTS ---
-          "@
+          $logContent = "Log file not found or empty."
+          if (Test-Path $robocopy_log) {
+              $logContent = (Get-Content $robocopy_log -ErrorAction SilentlyContinue | Out-String)
+          }
 
-          # Use Write-Host for final friendly message (if not failing)
-          Write-Host "=== Task processing complete. Review diagnostics below if failure occurred. ==="
+          # Using simple string formatting to avoid multiline parsing issues in the error output
+          $diagnosticMessage = "--- TASK DIAGNOSTICS DUMP ---`n"
+          $diagnosticMessage += "Robocopy Exit Code: $robocopy_exit_code.`n"
+          $diagnosticMessage += "ROBOCOPY LOG CONTENTS:`n"
+          $diagnosticMessage += $logContent
+          $diagnosticMessage += "`n--- END ROBOCOPY LOG CONTENTS ---"
           
           # CRITICAL: We are forcing an EXIT 1 to make Ansible/Semaphore output the log/error message.
-          if ($robocopy_exit_code -le 7) { # Successful/Minor Error (but files didn't copy)
-            Write-Error "ATTENTION: Robocopy finished with non-critical code ($robocopy_exit_code), but files did not copy. \`n\`n$diagnosticMessage"
+          if ($robocopy_exit_code -le 7) { 
+            # Successful/Minor Error (but files didn't copy, so we force an error to see why)
+            Write-Error "ATTENTION: Copy task finished successfully, but no file changes were detected. Review the full Robocopy log below for skipped files or empty source directory.`n`n$diagnosticMessage"
             exit 1
-          } else { # Critical Failure (Access Denied/Fatal)
-            Write-Error "CRITICAL FAILURE: Robocopy exited with code $robocopy_exit_code. \`n\`n$diagnosticMessage"
+          } else { 
+            # Critical Failure (e.g., Access Denied)
+            Write-Error "CRITICAL FAILURE: Robocopy exited with code $robocopy_exit_code. Review the full log for details.`n`n$diagnosticMessage"
             exit 1
           }
