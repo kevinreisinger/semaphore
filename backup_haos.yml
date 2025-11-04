@@ -4,14 +4,11 @@
   gather_facts: no
 
   vars:
-    # NOTE: These variables are now used as direct UNC paths
+    # NOTE: These variables are used as direct UNC paths
     source_share: '\\haos01\backup'
     destination_share: '\\kevireis-home\i$\Applications\Haos\Backup'
     share_username: '' # Provide username if needed for authentication
     share_password: '' # Provide password if needed for authentication
-    # Mapped drive letters are now deprecated in the script, but left in vars for easy reference
-    mapped_drive_letter_src: 'X' 
-    mapped_drive_letter_dst: 'Y'
     max_backups_to_keep: 10
 
   tasks:
@@ -36,16 +33,14 @@
 
           $source_path = $source_share
           $destination_path = $destination_share
+          $robocopy_log = "C:\Temp\HAOS_Backup_Copy_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
 
           # --- Step 1: Handle Authentication (If credentials provided) ---
           if (-not [string]::IsNullOrWhiteSpace($share_username)) {
             Write-Host "Authenticating UNC paths using provided credentials..."
             try {
-                # Create a network credential object for the session
-                $credential = New-Object System.Net.NetworkCredential($share_username, $share_password)
-                
-                # NOTE: This uses the net use command *without* a drive letter 
-                # to authenticate the current session context for the UNC path.
+                # This uses net use command *without* a drive letter to authenticate the current session context.
+                # 
                 cmd.exe /c "net use $source_share /user:$share_username $share_password" | Out-Null
                 cmd.exe /c "net use $destination_share /user:$share_username $share_password" | Out-Null
 
@@ -55,7 +50,7 @@
                 }
             }
             catch {
-                Write-Host "FATAL ERROR: Failed to create network credentials or authenticate."
+                Write-Host "FATAL ERROR: Failed to handle network authentication."
                 exit 1
             }
           } else {
@@ -64,17 +59,16 @@
 
 
           # --- Step 2: Copy Files using Robocopy (UNC to UNC) ---
-          $robocopy_log = "C:\Temp\HAOS_Backup_Copy_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
-          
           Write-Host "Executing robocopy from $source_path to $destination_path..."
           
-          # CRITICAL: Using UNC paths directly. /E for subdirs, /R:1 /W:3 for retries, /V verbose, /NP no progress bar, /LOG+ for append
-          robocopy $source_path $destination_path /E /R:1 /W:3 /V /NP /LOG+:$robocopy_log
+          # CRITICAL CHANGE: Using /MIR (Mirror) for aggressive copying.
+          # /R:1 /W:3 for retries, /V verbose, /NP no progress bar, /LOG+ for append
+          robocopy $source_path $destination_path /MIR /R:1 /W:3 /V /NP /LOG+:$robocopy_log
 
           $robocopy_exit_code = $LASTEXITCODE
           Write-Host "Robocopy finished with exit code $robocopy_exit_code."
           
-          # CRITICAL CHECK: Fail the Ansible task if Robocopy failed due to critical errors
+          # CRITICAL CHECK: Fail the Ansible task if Robocopy failed due to permissions or critical errors
           if ($robocopy_exit_code -eq 5) {
             Write-Host "FATAL ERROR (Access Denied): Robocopy failed due to a permissions error. (Code 5)."
             exit 1
@@ -87,18 +81,23 @@
 
           # --- Step 3: Apply Retention Policy ---
           Write-Host "Applying retention policy (keeping $max_backups_to_keep latest backups) on $destination_path..."
-          # NOTE: Using the UNC destination path directly here
-          $backups = Get-ChildItem -Path $destination_path -Include *.tar, *.tar.gz, *.zip -File -Recurse | Sort-Object LastWriteTime -Descending
+          
+          try {
+              $backups = Get-ChildItem -Path $destination_path -Include *.tar, *.tar.gz, *.zip -File -Recurse | Sort-Object LastWriteTime -Descending
 
-          if ($backups.Count -gt $max_backups_to_keep) {
-            $toDelete = $backups | Select-Object -Skip $max_backups_to_keep
-            foreach ($file in $toDelete) {
-              Write-Host "Deleting old backup: $($file.FullName)"
-              Remove-Item $file.FullName -Force -ErrorAction SilentlyContinue
-            }
+              if ($backups.Count -gt $max_backups_to_keep) {
+                $toDelete = $backups | Select-Object -Skip $max_backups_to_keep
+                foreach ($file in $toDelete) {
+                  Write-Host "Deleting old backup: $($file.FullName)"
+                  Remove-Item $file.FullName -Force -ErrorAction SilentlyContinue
+                }
+              }
+          } catch {
+              Write-Host "WARNING: Failed to apply retention policy. Check destination path permissions for Get-ChildItem."
           }
 
-          # --- Step 4: Clean Up Authentication Session ---
+
+          # --- Step 4: Clean Up Authentication Session and Dump Log ---
           if (-not [string]::IsNullOrWhiteSpace($share_username)) {
             Write-Host "Cleaning up network authentication..."
             cmd.exe /c "net use $source_share /delete" | Out-Null
@@ -107,4 +106,9 @@
 
           Write-Host "=== HAOS backup copy completed successfully ==="
           
+          # FORCE LOG DUMP INTO ANSIBLE OUTPUT
+          Write-Output "--- ROBOCOPY LOG CONTENTS ---"
+          Get-Content $robocopy_log -ErrorAction SilentlyContinue
+          Write-Output "--- END ROBOCOPY LOG CONTENTS ---"
+
           exit 0
