@@ -13,8 +13,16 @@
     max_backups_to_keep: 10
 
   tasks:
-    - name: Execute HAOS Network Copy Script (PowerShell)
+    - name: Copy HAOS backups from source to destination
       ansible.windows.win_powershell:
+        parameters:
+          source_share: "{{ source_share }}"
+          destination_share: "{{ destination_share }}"
+          mapped_drive_letter_src: "{{ mapped_drive_letter_src }}"
+          mapped_drive_letter_dst: "{{ mapped_drive_letter_dst }}"
+          share_username: "{{ share_username }}"
+          share_password: "{{ share_password }}"
+          max_backups_to_keep: "{{ max_backups_to_keep }}"
         script: |
           param(
             [string]$source_share,
@@ -28,57 +36,46 @@
 
           Write-Host "=== Starting HAOS backup copy process ==="
 
-          cmd.exe /c "net use ${mapped_drive_letter_src}: /delete /y" | Out-Null
-          cmd.exe /c "net use ${mapped_drive_letter_dst}: /delete /y" | Out-Null
+          # Unmap any existing drives
+          cmd.exe /c "net use $mapped_drive_letter_src`: /delete /y" | Out-Null
+          cmd.exe /c "net use $mapped_drive_letter_dst`: /delete /y" | Out-Null
 
-          Write-Host "Mapping source: ${mapped_drive_letter_src}: to $source_share ..."
-          cmd.exe /c "net use ${mapped_drive_letter_src}: `"$source_share`"" | Out-Null
-
+          Write-Host "Mapping source share: $source_share"
+          cmd.exe /c "net use $mapped_drive_letter_src`: $source_share" | Out-Null
           if ($LASTEXITCODE -ne 0) {
-              Write-Host "ERROR: Failed to map source share."
-              exit 1
+            Write-Host "ERROR: Could not map source share."
+            exit 1
           }
 
-          Write-Host "Mapping destination: ${mapped_drive_letter_dst}: to $destination_share ..."
+          Write-Host "Mapping destination share: $destination_share"
           if ([string]::IsNullOrWhiteSpace($share_username)) {
-              cmd.exe /c "net use ${mapped_drive_letter_dst}: `"$destination_share`"" | Out-Null
+            cmd.exe /c "net use $mapped_drive_letter_dst`: $destination_share" | Out-Null
           } else {
-              cmd.exe /c "net use ${mapped_drive_letter_dst}: `"$destination_share`" `"$share_password`" /user:`"$share_username`" /persistent:no" | Out-Null
+            cmd.exe /c "net use $mapped_drive_letter_dst`: $destination_share $share_password /user:$share_username /persistent:no" | Out-Null
           }
 
           if ($LASTEXITCODE -ne 0) {
-              Write-Host "ERROR: Failed to map destination share."
-              cmd.exe /c "net use ${mapped_drive_letter_src}: /delete /y" | Out-Null
-              exit 1
+            Write-Host "ERROR: Could not map destination share."
+            cmd.exe /c "net use $mapped_drive_letter_src`: /delete /y" | Out-Null
+            exit 1
           }
 
-          Write-Host "Network shares mapped successfully."
+          Write-Host "Copying files..."
+          robocopy "$mapped_drive_letter_src`:\\" "$mapped_drive_letter_dst`:\\" /E /R:1 /W:3 /NFL /NDL /NP /LOG+:C:\Temp\HAOS_Backup_Copy.log"
 
-          Write-Host "Copying files from ${mapped_drive_letter_src}: to ${mapped_drive_letter_dst}: ..."
-          robocopy "${mapped_drive_letter_src}:\\" "${mapped_drive_letter_dst}:\\" /E /COPYALL /R:1 /W:3 /NFL /NDL /NP /LOG+:C:\Temp\HAOS_Backup_Copy.log"
-
-          Write-Host "Applying retention policy (keep last $max_backups_to_keep backups)..."
-          $backups = Get-ChildItem -Path "${mapped_drive_letter_dst}:\\" -Recurse -Include "*.tar", "*.tar.gz", "*.zip" |
-                      Sort-Object LastWriteTime -Descending
+          Write-Host "Applying retention policy..."
+          $backups = Get-ChildItem -Path "$mapped_drive_letter_dst`:\" -Include *.tar, *.tar.gz, *.zip -Recurse | Sort-Object LastWriteTime -Descending
 
           if ($backups.Count -gt $max_backups_to_keep) {
-              $toDelete = $backups | Select-Object -Skip $max_backups_to_keep
-              foreach ($file in $toDelete) {
-                  Write-Host "Deleting old backup: $($file.FullName)"
-                  Remove-Item $file.FullName -Force -ErrorAction SilentlyContinue
-              }
+            $toDelete = $backups | Select-Object -Skip $max_backups_to_keep
+            foreach ($file in $toDelete) {
+              Write-Host "Deleting old backup: $($file.FullName)"
+              Remove-Item $file.FullName -Force -ErrorAction SilentlyContinue
+            }
           }
 
-          cmd.exe /c "net use ${mapped_drive_letter_src}: /delete /y" | Out-Null
-          cmd.exe /c "net use ${mapped_drive_letter_dst}: /delete /y" | Out-Null
+          Write-Host "Cleaning up..."
+          cmd.exe /c "net use $mapped_drive_letter_src`: /delete /y" | Out-Null
+          cmd.exe /c "net use $mapped_drive_letter_dst`: /delete /y" | Out-Null
 
-          Write-Host "HAOS backup copy completed successfully."
-
-        parameters:
-          source_share: "{{ source_share }}"
-          destination_share: "{{ destination_share }}"
-          mapped_drive_letter_src: "{{ mapped_drive_letter_src }}"
-          mapped_drive_letter_dst: "{{ mapped_drive_letter_dst }}"
-          share_username: "{{ share_username }}"
-          share_password: "{{ share_password }}"
-          max_backups_to_keep: "{{ max_backups_to_keep }}"
+          Write-Host "=== HAOS backup copy completed successfully ==="
