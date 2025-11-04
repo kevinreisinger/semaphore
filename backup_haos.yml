@@ -17,39 +17,38 @@
       ansible.windows.win_powershell:
         script: |
           # --- Config pulled from Ansible vars ---
-          $SourceShare = @'
-          {{ source_share }}
-          '@
-
-          $DestinationShare = @'
-          {{ destination_share }}
-          '@
-
+          $SourceShare = '{{ source_share | replace("\", "\\") }}'
+          $DestinationShare = '{{ destination_share | replace("\", "\\") }}'
           $MappedSrc = '{{ mapped_drive_letter_src }}'
           $MappedDst = '{{ mapped_drive_letter_dst }}'
-          $ShareUser = '{{ share_username }}'
-          $SharePass = '{{ share_password }}'
-          $MaxKeep = {{ max_backups_to_keep }}
+          $ShareUser = '{{ share_username | default("") }}'
+          $SharePass = '{{ share_password | default("") }}'
+          $MaxKeep = [int]{{ max_backups_to_keep }}
 
           Write-Host "=== Starting HAOS backup copy process ==="
 
-          # --- 1. Unmap existing drives silently ---
-          cmd.exe /c net use ${MappedSrc}: /delete /y | Out-Null
-          cmd.exe /c net use ${MappedDst}: /delete /y | Out-Null
+          # --- 1. Clean up any previous mappings ---
+          cmd.exe /c "net use ${MappedSrc}: /delete /y" | Out-Null
+          cmd.exe /c "net use ${MappedDst}: /delete /y" | Out-Null
 
           # --- 2. Map both network shares ---
           Write-Host "Mapping source: ${MappedSrc}: to $SourceShare ..."
-          cmd.exe /c net use ${MappedSrc}: "$SourceShare" | Out-Null
+          cmd.exe /c "net use ${MappedSrc}: `"$SourceShare`"" | Out-Null
           if ($LASTEXITCODE -ne 0) {
               Write-Host "ERROR: Failed to map source share."
               exit 1
           }
 
           Write-Host "Mapping destination: ${MappedDst}: to $DestinationShare ..."
-          cmd.exe /c net use ${MappedDst}: "$DestinationShare" "$SharePass" /user:"$ShareUser" /persistent:no | Out-Null
+          if ([string]::IsNullOrWhiteSpace($ShareUser)) {
+              cmd.exe /c "net use ${MappedDst}: `"$DestinationShare`"" | Out-Null
+          } else {
+              cmd.exe /c "net use ${MappedDst}: `"$DestinationShare`" `"$SharePass`" /user:`"$ShareUser`" /persistent:no" | Out-Null
+          }
+
           if ($LASTEXITCODE -ne 0) {
               Write-Host "ERROR: Failed to map destination share."
-              cmd.exe /c net use ${MappedSrc}: /delete /y | Out-Null
+              cmd.exe /c "net use ${MappedSrc}: /delete /y" | Out-Null
               exit 1
           }
 
@@ -59,17 +58,15 @@
           Write-Host "Copying files from ${MappedSrc}: to ${MappedDst}: ..."
           try {
               robocopy "${MappedSrc}:\\" "${MappedDst}:\\" /E /COPYALL /R:1 /W:3 /NFL /NDL /NP /LOG+:C:\Temp\HAOS_Backup_Copy.log"
-          }
-          catch {
-              Write-Host "ERROR: Copy failed. $($_.Exception.Message)"
+          } catch {
+              Write-Host "ERROR: Copy failed: $($_.Exception.Message)"
               exit 1
           }
 
-          # --- 4. Retention (keep only most recent $MaxKeep backups) ---
-          Write-Host "Applying retention policy (keep last $MaxKeep)..."
+          # --- 4. Retention policy ---
+          Write-Host "Applying retention policy (keep last $MaxKeep backups)..."
           $backups = Get-ChildItem -Path "${MappedDst}:\\" -Recurse -Include "*.tar", "*.tar.gz", "*.zip" |
                       Sort-Object LastWriteTime -Descending
-
           if ($backups.Count -gt $MaxKeep) {
               $toDelete = $backups | Select-Object -Skip $MaxKeep
               foreach ($file in $toDelete) {
@@ -78,14 +75,9 @@
               }
           }
 
-          # --- 5. Cleanup mappings ---
+          # --- 5. Cleanup ---
           Write-Host "Cleaning up network drives..."
-          cmd.exe /c net use ${MappedSrc}: /delete /y | Out-Null
-          cmd.exe /c net use ${MappedDst}: /delete /y | Out-Null
+          cmd.exe /c "net use ${MappedSrc}: /delete /y" | Out-Null
+          cmd.exe /c "net use ${MappedDst}: /delete /y" | Out-Null
 
           Write-Host "HAOS backup copy completed successfully."
-      register: haos_backup_result
-
-    - name: Display result
-      debug:
-        var: haos_backup_result.stdout_lines
