@@ -4,29 +4,21 @@
   gather_facts: no
 
   vars:
-    # --- SOURCE AND DESTINATION ---
-    source_share: "\\\\haos01\\backup"
-    destination_share: "\\\\kevireis-home\\i$\\Applications\\Haos\\Backup"
-
-    # --- NETWORK SHARE CREDENTIALS (FILL THESE IN) ---
-    share_username: ""
-    share_password: ""
-
-    # --- Drive letter to use for temporary mapping (must be free) ---
-    mapped_drive_letter_src: "X"
-    mapped_drive_letter_dst: "Y"
-
-    # --- Retention ---
+    source_share: '\\\\haos01\\backup'
+    destination_share: '\\\\kevireis-home\\i$\\Applications\\Haos\\Backup'
+    share_username: ''
+    share_password: ''
+    mapped_drive_letter_src: 'X'
+    mapped_drive_letter_dst: 'Y'
     max_backups_to_keep: 10
 
   tasks:
-
     - name: Execute HAOS Network Copy Script (PowerShell)
       ansible.windows.win_powershell:
         script: |
           # --- Config pulled from Ansible vars ---
-          $SourceShare = '{{ source_share }}'
-          $DestinationShare = '{{ destination_share }}'
+          $SourceShare = @'{{ source_share }}'@
+          $DestinationShare = @'{{ destination_share }}'@
           $MappedSrc = '{{ mapped_drive_letter_src }}'
           $MappedDst = '{{ mapped_drive_letter_dst }}'
           $ShareUser = '{{ share_username }}'
