@@ -4,15 +4,15 @@
   gather_facts: no
 
   vars:
-    # NOTE: These variables are used as direct UNC paths
+    # NOTE: Adjust paths and credentials below
     source_share: '\\haos01\backup'
     destination_share: '\\kevireis-home\i$\Applications\Haos\Backup'
-    share_username: '' # Provide username if needed for authentication
-    share_password: '' # Provide password if needed for authentication
+    share_username:
+    share_password:
     max_backups_to_keep: 10
 
   tasks:
-    - name: Copy HAOS backups via UNC paths and apply retention
+    - name: Copy HAOS backups via mapped drives and apply retention
       ansible.windows.win_powershell:
         parameters:
           source_share: "{{ source_share }}"
@@ -29,94 +29,92 @@
             [int]$max_backups_to_keep
           )
 
-          $source_path = $source_share
-          $destination_path = $destination_share
           $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
-          
-          # CRITICAL FIX: Ensure the temp directory exists before Robocopy tries to log
-          if (-not (Test-Path -Path C:\Temp)) {
-              New-Item -Path C:\Temp -ItemType Directory | Out-Null
-              Write-Host "Created C:\Temp directory for logging."
-          }
-          
-          $robocopy_log = "C:\Temp\HAOS_Backup_Copy_$timestamp.log"
-          $robocopy_exit_code = 0 # Initialize
-
-          Write-Host "=== Starting HAOS backup copy process (UNC Method) ==="
-          Write-Host "Log file target: $robocopy_log"
-
-          # --- Step 1: Handle Authentication (If credentials provided) ---
-          if (-not [string]::IsNullOrWhiteSpace($share_username)) {
-            Write-Host "Authenticating UNC paths using provided credentials..."
-            cmd.exe /c "net use $source_share /user:$share_username $share_password" | Out-Null
-            cmd.exe /c "net use $destination_share /user:$share_username $share_password" | Out-Null
-
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "FATAL ERROR: Failed to authenticate to network share (Net Use Exit Code $LASTEXITCODE). Forcing final failure dump."
-                $robocopy_exit_code = 99
-            }
-          } else {
-            Write-Host "No credentials provided. Copying using current WinRM user context."
+          $log_dir = 'C:\Temp'
+          if (-not (Test-Path $log_dir)) {
+            New-Item -ItemType Directory -Path $log_dir | Out-Null
           }
 
-          # --- Step 2: Copy Files using Robocopy (UNC to UNC) ---
-          if ($robocopy_exit_code -eq 0) {
-            Write-Host "Executing robocopy from $source_path to $destination_path..."
-            
-            # /MIR (Mirror), /R:1 /W:3 (retries), /V (verbose), /NP (no progress), /LOG+ (append)
-            robocopy $source_path $destination_path /MIR /R:1 /W:3 /V /NP /LOG+:$robocopy_log
+          $robocopy_log = Join-Path $log_dir "HAOS_Backup_Copy_$timestamp.log"
+          $robocopy_exit_code = 0
 
-            $robocopy_exit_code = $LASTEXITCODE
-            Write-Host "Robocopy finished with exit code $robocopy_exit_code."
+          Write-Host "=== Starting HAOS Backup Copy (Mapped Drive Method) ==="
+          Write-Host "Source: $source_share"
+          Write-Host "Destination: $destination_share"
+          Write-Host "Log: $robocopy_log"
+
+          $srcDrive = 'Z:'
+          $dstDrive = 'Y:'
+
+          # --- Step 1: Map drives ---
+          try {
+            Write-Host "Mapping network drives..."
+            cmd.exe /c "net use $srcDrive $source_share /user:$share_username $share_password /persistent:no" | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Failed to map source share." }
+
+            cmd.exe /c "net use $dstDrive $destination_share /user:$share_username $share_password /persistent:no" | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Failed to map destination share." }
+
+            Write-Host "Successfully mapped $srcDrive -> $source_share and $dstDrive -> $destination_share"
           }
-
-          # --- Step 3: Apply Retention Policy (Only if Robocopy was successful or minor error) ---
-          if ($robocopy_exit_code -le 7) { 
-              Write-Host "Applying retention policy (keeping $max_backups_to_keep latest backups) on $destination_path..."
-              
-              try {
-                  $backups = Get-ChildItem -Path $destination_path -Include *.tar, *.tar.gz, *.zip -File -Recurse | Sort-Object LastWriteTime -Descending
-
-                  if ($backups.Count -gt $max_backups_to_keep) {
-                    $toDelete = $backups | Select-Object -Skip $max_backups_to_keep
-                    foreach ($file in $toDelete) {
-                      Write-Host "Deleting old backup: $($file.FullName)"
-                      Remove-Item $file.FullName -Force -ErrorAction SilentlyContinue
-                    }
-                  }
-              } catch {
-                  Write-Host "WARNING: Failed to apply retention policy."
-              }
-          }
-          
-          # --- Step 4: Clean Up Authentication Session ---
-          if (-not [string]::IsNullOrWhiteSpace($share_username)) {
-            Write-Host "Cleaning up network authentication..."
-            cmd.exe /c "net use $source_share /delete" | Out-Null
-            cmd.exe /c "net use $destination_share /delete" | Out-Null
-          }
-
-          # --- Step 5: FINAL DIAGNOSTIC DUMP (Forcing Failure to See Output) ---
-          
-          $logContent = "Log file not found or empty."
-          if (Test-Path $robocopy_log) {
-              $logContent = (Get-Content $robocopy_log -ErrorAction SilentlyContinue | Out-String)
-          }
-
-          # Using simple string formatting to avoid multiline parsing issues in the error output
-          $diagnosticMessage = "--- TASK DIAGNOSTICS DUMP ---`n"
-          $diagnosticMessage += "Robocopy Exit Code: $robocopy_exit_code.`n"
-          $diagnosticMessage += "ROBOCOPY LOG CONTENTS:`n"
-          $diagnosticMessage += $logContent
-          $diagnosticMessage += "`n--- END ROBOCOPY LOG CONTENTS ---"
-          
-          # CRITICAL: We are forcing an EXIT 1 to make Ansible/Semaphore output the log/error message.
-          if ($robocopy_exit_code -le 7) { 
-            # Successful/Minor Error (but files didn't copy, so we force an error to see why)
-            Write-Error "ATTENTION: Copy task finished successfully, but no file changes were detected. Review the full Robocopy log below for skipped files or empty source directory.`n`n$diagnosticMessage"
+          catch {
+            Write-Error "Network drive mapping failed: $($_.Exception.Message)"
             exit 1
-          } else { 
-            # Critical Failure (e.g., Access Denied)
-            Write-Error "CRITICAL FAILURE: Robocopy exited with code $robocopy_exit_code. Review the full log for details.`n`n$diagnosticMessage"
+          }
+
+          # --- Step 2: Sanity check: confirm source files exist ---
+          Write-Host "Verifying source drive visibility..."
+          $srcTest = Get-ChildItem "$srcDrive\" -ErrorAction SilentlyContinue | Select-Object -First 3
+          if (-not $srcTest) {
+            Write-Error "Source directory appears empty or inaccessible ($source_share)."
+            cmd.exe /c "net use $srcDrive /delete /Y" | Out-Null
+            cmd.exe /c "net use $dstDrive /delete /Y" | Out-Null
+            exit 1
+          }
+
+          # --- Step 3: Perform Robocopy ---
+          Write-Host "Executing robocopy mirror from $srcDrive to $dstDrive..."
+          robocopy "$srcDrive\" "$dstDrive\" /MIR /R:1 /W:3 /V /NP /LOG+:$robocopy_log
+          $robocopy_exit_code = $LASTEXITCODE
+          Write-Host "Robocopy finished with exit code $robocopy_exit_code."
+
+          # --- Step 4: Retention Policy ---
+          if ($robocopy_exit_code -le 7) {
+            Write-Host "Applying retention policy (keep $max_backups_to_keep latest backups)..."
+            try {
+              $backups = Get-ChildItem "$dstDrive\" -Include *.tar, *.tar.gz, *.zip -File -Recurse | Sort-Object LastWriteTime -Descending
+              if ($backups.Count -gt $max_backups_to_keep) {
+                $toDelete = $backups | Select-Object -Skip $max_backups_to_keep
+                foreach ($file in $toDelete) {
+                  Write-Host "Deleting old backup: $($file.FullName)"
+                  Remove-Item $file.FullName -Force -ErrorAction SilentlyContinue
+                }
+              }
+            }
+            catch {
+              Write-Host "WARNING: Failed to apply retention policy. $($_.Exception.Message)"
+            }
+          }
+
+          # --- Step 5: Cleanup ---
+          Write-Host "Cleaning up mapped drives..."
+          cmd.exe /c "net use $srcDrive /delete /Y" | Out-Null
+          cmd.exe /c "net use $dstDrive /delete /Y" | Out-Null
+
+          # --- Step 6: Diagnostics Dump ---
+          $logContent = "Log not found."
+          if (Test-Path $robocopy_log) {
+            $logContent = (Get-Content $robocopy_log -ErrorAction SilentlyContinue | Out-String)
+          }
+
+          $diagnosticMessage = "--- TASK DIAGNOSTICS DUMP ---`n"
+          $diagnosticMessage += "Robocopy Exit Code: $robocopy_exit_code`n"
+          $diagnosticMessage += "ROBOCOPY LOG:`n$logContent`n--- END LOG ---"
+
+          if ($robocopy_exit_code -le 7) {
+            Write-Host "Backup copy completed successfully."
+            Write-Host $diagnosticMessage
+          } else {
+            Write-Error "CRITICAL FAILURE: Robocopy exited with code $robocopy_exit_code.`n$diagnosticMessage"
             exit 1
           }
