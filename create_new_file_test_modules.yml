@@ -1,0 +1,74 @@
+---
+# Playbook: create_files.yml
+# Description: Creates a file with specific content on both Linux and Windows
+# target hosts using the universal 'ansible.builtin.copy' module conditionally.
+
+- name: Manage Files on Linux and Windows
+  # Assuming your inventory has groups for both types, or you can run this against 'all'
+  hosts: all
+  gather_facts: true
+  become: yes # Only necessary for Linux/root permissions
+
+  vars:
+    # Paths for OS-specific conditional tasks
+    file_path_linux: /tmp/ansible_test_file_linux_content.txt
+    file_path_windows: C:\temp\ansible_test_file_windows_content.txt
+    
+    # Path for the single-task universal example
+    copy_path_universal: /tmp/ansible_universal_copy.txt # Windows hosts will resolve this path to C:\ansible_universal_copy.txt due to the conditional dest
+    copy_path_universal_windows: C:\temp\ansible_universal_copy.txt
+
+  tasks:
+
+    # ----------------------------------------------------------------------
+    # Task 1: Create file with content on Linux/Unix systems
+    # Uses the 'copy' module which supports 'mode' for POSIX file permissions.
+    # ----------------------------------------------------------------------
+    - name: 1. Create content file on Linux hosts (using ansible.builtin.copy)
+      ansible.builtin.copy:
+        content: "This content is specific to the Linux file path: {{ file_path_linux }}\nOS Family: {{ ansible_facts['os_family'] }}"
+        dest: "{{ file_path_linux }}"
+        mode: '0644'
+      when: ansible_facts['os_family'] != "Windows"
+      register: linux_result
+    - name: Debug Linux Path (if not skipped)
+      ansible.builtin.debug:
+        msg: "Content file created successfully at {{ file_path_linux }}"
+      when: linux_result.changed is defined and linux_result.changed
+
+    # ----------------------------------------------------------------------
+    # Task 2: Create file with content on Windows systems
+    # Uses the 'copy' module which automatically handles Windows paths/transport.
+    # ----------------------------------------------------------------------
+    - name: 2. Create content file on Windows hosts (using ansible.builtin.copy)
+      ansible.builtin.copy:
+        content: "This content is specific to the Windows file path: {{ file_path_windows }}\nOS Family: {{ ansible_facts['os_family'] }}"
+        dest: "{{ file_path_windows }}"
+      when: ansible_facts['os_family'] == "Windows"
+      register: windows_result
+    - name: Debug Windows Path (if not skipped)
+      ansible.builtin.debug:
+        msg: "Content file created successfully at {{ file_path_windows }}"
+      when: windows_result.changed is defined and windows_result.changed
+
+    # ----------------------------------------------------------------------
+    # Task 3: Single-Task Universal File Creation (Demonstration)
+    # Uses one task definition to cover both OS platforms.
+    # ----------------------------------------------------------------------
+    - name: 3. Create file with content universally (using one copy task)
+      ansible.builtin.copy:
+        content: "This file was created universally by the Ansible copy module on a {{ ansible_facts['os_family'] }} system. The path was dynamically selected."
+        # Uses conditional expression to select the correct destination path
+        dest: "{{ copy_path_universal_windows if ansible_facts['os_family'] == 'Windows' else copy_path_universal }}"
+      register: copy_result
+    
+    - name: Debug Universal Path
+      ansible.builtin.debug:
+        msg: "Content file created successfully at {{ copy_result.dest }}"
+
+    # ----------------------------------------------------------------------
+    # Final debug to show the OS family used for checking
+    # ----------------------------------------------------------------------
+    - name: Debug OS Family Fact
+      ansible.builtin.debug:
+        msg: "Current OS Family: {{ ansible_facts['os_family'] }}. Task execution confirmed."
