@@ -30,7 +30,7 @@
           )
 
           $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
-          $log_dir = 'C:\Temp'
+          $log_dir = 'C:\Temp\HAOS_Backup_Logs'
           if (-not (Test-Path $log_dir)) {
             New-Item -ItemType Directory -Path $log_dir | Out-Null
           }
