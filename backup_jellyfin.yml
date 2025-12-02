@@ -1,17 +1,19 @@
 ---
 - name: 1. API Trigger Jellyfin Backup (Run on Controller)
   hosts: localhost
-  connection: local
   gather_facts: no
   
   vars:
+    # 🔑 FIX: Place connection variables inside the 'vars:' block.
+    # Setting ansible_connection: local and ansible_user: "" forces the local connection 
+    # and prevents inheritance of WinRM settings from the Windows play.
+    ansible_connection: local
+    ansible_user: "" 
+    
+    # Use the Windows server's details to access the Jellyfin endpoint
     jellyfin_url: "http://server2k19.reisingers.com:8096"
     jellyfin_api_key: "ba76d7d9312744a89f6ba3ed85a20921"
 
-  # 🔑 FINAL FIX: Explicitly set the connection user at the play level 
-  # This tells Ansible to use the local SSH/system user, fully overriding any inherited WinRM settings.
-  ansible_user: "" 
-  
   tasks:
     - name: 📞 Trigger Jellyfin Built-in Backup via API
       ansible.builtin.uri:
@@ -36,6 +38,7 @@
     network_share_path: "\\\\kevireis-home\\i$\\Applications\\Jellyfin\\Backup"
     temp_zip_pattern: 'jellyfin-backup-*.zip'
     
+    # Credentials for accessing the network share (Must be supplied externally)
     share_username: "" 
     share_password: "" 
     retention_days: 7
