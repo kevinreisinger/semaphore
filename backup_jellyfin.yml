@@ -1,25 +1,18 @@
 ---
-- name: API Triggered Jellyfin Backup and Network Transfer
-  hosts: server2k19.reisingers.com
-  gather_facts: yes
+- name: 1. API Trigger Jellyfin Backup (Run on Controller)
+  # This play is explicitly run on localhost (the Semaphore/Ansible host)
+  hosts: localhost
+  connection: local
+  gather_facts: no
   
   vars:
-    # --- JELLYFIN API CONFIG ---
+    # Use the Windows server's details to access the Jellyfin endpoint
     jellyfin_url: "http://server2k19.reisingers.com:8096"
     jellyfin_api_key: "ba76d7d9312744a89f6ba3ed85a20921"
-    
-    # --- FILE/SHARE CONFIG (On Windows Host) ---
-    local_backup_path: "C:\\ProgramData\\Jellyfin\\Server\\data\\backups" 
-    network_share_path: "\\\\kevireis-home\\i$\\Applications\\Jellyfin\\Backup"
-    temp_zip_pattern: 'jellyfin-backup-*.zip'
-    
-    # Credentials for accessing the network share (Must be supplied externally)
-    share_username: "" 
-    share_password: "" 
-    retention_days: 7 # Keep local files for 7 days before cleaning up
 
   tasks:
-    - name: 📞 Trigger Jellyfin Built-in Backup via API (Run on Controller)
+    - name: 📞 Trigger Jellyfin Built-in Backup via API
+      # No delegation needed here, as the play already targets localhost
       ansible.builtin.uri:
         url: "{{ jellyfin_url }}/Backup/Create"
         method: POST
@@ -30,13 +23,26 @@
         body_format: json
         status_code: 200
       register: backup_trigger_result
+      # Adding a brief pause to allow the API call to start the backup process
       
-      # 💥 FINAL FIX: Delegate to 127.0.0.1 and use the 'vars' block to override
-      # the inherited WinRM connection with 'local'.
-      delegate_to: 127.0.0.1 
-      vars:
-        ansible_connection: local
+# ---------------------------------------------------------------------------------------
 
+- name: 2. Copy Backup to Network Share and Cleanup (Run on Windows Host)
+  hosts: server2k19.reisingers.com
+  gather_facts: yes
+  
+  vars:
+    # --- FILE/SHARE CONFIG (On Windows Host) ---
+    local_backup_path: "C:\\ProgramData\\Jellyfin\\Server\\data\\backups" 
+    network_share_path: "\\\\kevireis-home\\i$\\Applications\\Jellyfin\\Backup"
+    temp_zip_pattern: 'jellyfin-backup-*.zip'
+    
+    # Credentials for accessing the network share (Must be supplied externally)
+    share_username: "" 
+    share_password: "" 
+    retention_days: 7
+
+  tasks:
     - name: 🔍 Find the newest backup file (wait up to 5 minutes for creation)
       ansible.windows.win_find:
         paths: "{{ local_backup_path }}"
