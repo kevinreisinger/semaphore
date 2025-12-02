@@ -1,7 +1,7 @@
 ---
 - name: API Triggered Jellyfin Backup and Network Transfer
   hosts: server2k19.reisingers.com
-  gather_facts: yes # Needed for ansible_date_time.epoch used in the wait check
+  gather_facts: yes
   
   vars:
     # --- JELLYFIN API CONFIG ---
@@ -13,7 +13,7 @@
     network_share_path: "\\\\kevireis-home\\i$\\Applications\\Jellyfin\\Backup"
     temp_zip_pattern: 'jellyfin-backup-*.zip'
     
-    # Credentials for accessing the network share (Must be passed by Semaphore)
+    # Credentials for accessing the network share (These must be supplied externally via ansible_share_username/password)
     share_username: "" 
     share_password: "" 
     retention_days: 7 # Keep local files for 7 days before cleaning up
@@ -26,28 +26,25 @@
         headers:
           X-MediaBrowser-Token: "{{ jellyfin_api_key }}"
           Content-Type: application/json
-        # These are the default options for a full backup.
         body: '{"Metadata": true, "Trickplay": false, "Subtitles": false, "Database": true}'
         body_format: json
         status_code: 200
       register: backup_trigger_result
-      # FIX: Force this task to run locally on the Semaphore server, avoiding WinRM errors.
+      # This resolves the conflict by relying only on delegate_to: localhost
       delegate_to: localhost 
-      ansible_connection: local 
 
     - name: 🔍 Find the newest backup file (wait up to 5 minutes for creation)
       ansible.windows.win_find:
         paths: "{{ local_backup_path }}"
         file_type: file
         pattern: "{{ temp_zip_pattern }}"
-        # Sort by creation time (descending) to get the newest file first
         sort_by: ctime
         sort_order: desc
       register: found_files
       # Loop until a file is found that was created within the last 5 minutes (300 seconds)
       until: found_files.files | length > 0 and (found_files.files[0].creation_time | to_datetime) > (ansible_date_time.epoch | int - 300) | to_datetime(format='%s')
-      retries: 30 # Retry 30 times
-      delay: 10   # Wait 10 seconds between retries (5 minutes total)
+      retries: 30
+      delay: 10
 
     - name: 📁 Set variable for the newest backup file
       ansible.builtin.set_fact:
@@ -57,9 +54,7 @@
       ansible.windows.win_copy:
         src: "{{ newest_backup_file }}"
         dest: "{{ network_share_path }}"
-        remote_src: true # Tells Ansible to copy a file from the remote host (server2k19) to the share
-        # These credentials are used by the win_copy module to authenticate with the UNC path
-        # They MUST be set by Semaphore/Inventory as ansible_share_username/password
+        remote_src: true
         
     - name: 🧹 Clean up old local backup files (older than {{ retention_days }} days)
       ansible.windows.win_find:
