@@ -13,7 +13,7 @@
     network_share_path: "\\\\kevireis-home\\i$\\Applications\\Jellyfin\\Backup"
     temp_zip_pattern: 'jellyfin-backup-*.zip'
     
-    # Credentials for accessing the network share (These must be supplied externally via ansible_share_username/password)
+    # Credentials for accessing the network share (Must be supplied externally)
     share_username: "" 
     share_password: "" 
     retention_days: 7 # Keep local files for 7 days before cleaning up
@@ -30,8 +30,12 @@
         body_format: json
         status_code: 200
       register: backup_trigger_result
-      # This resolves the conflict by relying only on delegate_to: localhost
-      delegate_to: localhost 
+      
+      # 💥 FINAL FIX: Delegate to 127.0.0.1 and use the 'vars' block to override
+      # the inherited WinRM connection with 'local'.
+      delegate_to: 127.0.0.1 
+      vars:
+        ansible_connection: local
 
     - name: 🔍 Find the newest backup file (wait up to 5 minutes for creation)
       ansible.windows.win_find:
