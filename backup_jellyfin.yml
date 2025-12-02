@@ -1,18 +1,19 @@
 ---
 - name: 1. API Trigger Jellyfin Backup (Run on Controller)
-  # This play is explicitly run on localhost (the Semaphore/Ansible host)
   hosts: localhost
   connection: local
   gather_facts: no
   
   vars:
-    # Use the Windows server's details to access the Jellyfin endpoint
     jellyfin_url: "http://server2k19.reisingers.com:8096"
     jellyfin_api_key: "ba76d7d9312744a89f6ba3ed85a20921"
 
+  # 🔑 FINAL FIX: Explicitly set the connection user at the play level 
+  # This tells Ansible to use the local SSH/system user, fully overriding any inherited WinRM settings.
+  ansible_user: "" 
+  
   tasks:
     - name: 📞 Trigger Jellyfin Built-in Backup via API
-      # No delegation needed here, as the play already targets localhost
       ansible.builtin.uri:
         url: "{{ jellyfin_url }}/Backup/Create"
         method: POST
@@ -23,7 +24,6 @@
         body_format: json
         status_code: 200
       register: backup_trigger_result
-      # Adding a brief pause to allow the API call to start the backup process
       
 # ---------------------------------------------------------------------------------------
 
@@ -32,12 +32,10 @@
   gather_facts: yes
   
   vars:
-    # --- FILE/SHARE CONFIG (On Windows Host) ---
     local_backup_path: "C:\\ProgramData\\Jellyfin\\Server\\data\\backups" 
     network_share_path: "\\\\kevireis-home\\i$\\Applications\\Jellyfin\\Backup"
     temp_zip_pattern: 'jellyfin-backup-*.zip'
     
-    # Credentials for accessing the network share (Must be supplied externally)
     share_username: "" 
     share_password: "" 
     retention_days: 7
@@ -51,7 +49,6 @@
         sort_by: ctime
         sort_order: desc
       register: found_files
-      # Loop until a file is found that was created within the last 5 minutes (300 seconds)
       until: found_files.files | length > 0 and (found_files.files[0].creation_time | to_datetime) > (ansible_date_time.epoch | int - 300) | to_datetime(format='%s')
       retries: 30
       delay: 10
