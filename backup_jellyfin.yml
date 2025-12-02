@@ -1,14 +1,14 @@
 ---
 - name: Automated Jellyfin Backup and Network Transfer
   hosts: server2k19.reisingers.com
-  become: true # Ensures tasks requiring elevated permissions (win_copy to network share) can execute
-  become_method: runas
+  # Removed become: true, become_method: runas, and become_user
   
   vars:
+    # ⚠️ NOTE: These values are used for the API call only.
     jellyfin_url: "http://server2k19.reisingers.com:8096"
     jellyfin_api_key: "ba76d7d9312744a89f6ba3ed85a20921"
     
-    # Default path for Windows Service Install (adjust if needed)
+    # Local Windows paths
     local_backup_path: "C:\\ProgramData\\Jellyfin\\Server\\data\\backups" 
     
     # Destination Network Share (UNC path)
@@ -24,13 +24,11 @@
         headers:
           X-MediaBrowser-Token: "{{ jellyfin_api_key }}"
           Content-Type: application/json
-        # These are the default options for a full backup.
         body: '{"Metadata": true, "Trickplay": false, "Subtitles": false, "Database": true}'
         body_format: json
         status_code: 200
       register: backup_trigger_result
-      # 💥 FIX: Force this task to run on the Ansible controller (where Python/URI is installed)
-      # to avoid the WinRM deserialization error.
+      # FIX: Delegate API call to Ansible controller
       delegate_to: localhost 
 
     - name: 🔍 Find the newest backup file (wait up to 5 minutes for creation)
@@ -38,24 +36,24 @@
         paths: "{{ local_backup_path }}"
         file_type: file
         pattern: "{{ temp_zip_pattern }}"
-        # Sort by creation time (descending) to get the newest file first
         sort_by: ctime
         sort_order: desc
       register: found_files
-      # Check if the file exists AND if its creation time is within the last 5 minutes (300 seconds)
+      # Check if the file exists AND if its creation time is recent
       until: found_files.files | length > 0 and (found_files.files[0].creation_time | to_datetime) > (ansible_date_time.epoch | int - 300) | to_datetime(format='%s')
-      retries: 30 # Retry 30 times
-      delay: 10   # Wait 10 seconds between retries (5 minutes total)
+      retries: 30 
+      delay: 10   
 
     - name: 📁 Set variable for the newest backup file
       ansible.builtin.set_fact:
         newest_backup_file: "{{ found_files.files[0].path }}"
         
     - name: 📤 Copy the newest backup file to the network share
+      # This task requires ansible_share_username/password to be set outside the playbook.
       ansible.windows.win_copy:
         src: "{{ newest_backup_file }}"
         dest: "{{ network_share_path }}"
-        remote_src: true # Tells Ansible to copy a file from the remote host (server2k19)
+        remote_src: true 
 
     - name: 🧹 Clean up old local backup files (keeping only the newest one)
       ansible.windows.win_find:
@@ -70,7 +68,6 @@
       ansible.windows.win_file:
         path: "{{ item.path }}"
         state: absent
-      # Skip the first item in the list (the newest one)
       loop: "{{ all_local_backups.files[1:] }}"
       when: all_local_backups.files | length > 1
       loop_control:
