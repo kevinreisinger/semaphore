@@ -9,7 +9,7 @@
     jellyfin_data_path: "C:\\ProgramData\\Jellyfin\\Server" 
     local_backup_root: "C:\\Temp\\Jellyfin_Backup_Root"
     local_staging_path: "{{ local_backup_root }}\\Staging"
-    max_backups_to_keep: 10
+    max_backups_to_keep: 5
     
     # --- NETWORK SHARE CONFIGURATION ---
     share_username: ""
