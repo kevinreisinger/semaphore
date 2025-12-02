@@ -1,6 +1,6 @@
 ---
 - name: Automated Jellyfin Backup and Network Transfer
-  hosts: jellyfin_windows_server # Your Windows server
+  hosts: server2k19.reisingers.com
   become: true
   vars:
     jellyfin_url: "http://192.168.1.100:8096"
