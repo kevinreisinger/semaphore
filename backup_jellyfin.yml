@@ -10,7 +10,7 @@
     local_backup_path: "C:\\ProgramData\\Jellyfin\\Server\\data\\backups" 
     
     # Destination Network Share (use a UNC path)
-    network_share_path: "\\\\your-nas\\backups\\jellyfin"
+    network_share_path: "\\\\kevireis-home\\i$\\Applications\\Jellyfin\\Backup"
     
     temp_zip_pattern: 'jellyfin-backup-*.zip'
     
