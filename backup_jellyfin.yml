@@ -1,6 +1,8 @@
 ---
 - name: Automated Jellyfin Backup and Network Transfer
   hosts: server2k19.reisingers.com
+  become: true # Ensures tasks requiring elevated permissions (win_copy to network share) can execute
+  
   vars:
     jellyfin_url: "http://server2k19.reisingers.com:8096"
     jellyfin_api_key: "ba76d7d9312744a89f6ba3ed85a20921"
@@ -8,13 +10,13 @@
     # Default path for Windows Service Install (adjust if needed)
     local_backup_path: "C:\\ProgramData\\Jellyfin\\Server\\data\\backups" 
     
-    # Destination Network Share (use a UNC path)
+    # Destination Network Share (UNC path)
     network_share_path: "\\\\kevireis-home\\i$\\Applications\\Jellyfin\\Backup"
     
     temp_zip_pattern: 'jellyfin-backup-*.zip'
     
   tasks:
-    - name: 📞 Trigger Jellyfin Built-in Backup via API
+    - name: 📞 Trigger Jellyfin Built-in Backup via API (Run on Controller)
       ansible.builtin.uri:
         url: "{{ jellyfin_url }}/Backup/Create"
         method: POST
@@ -26,7 +28,10 @@
         body_format: json
         status_code: 200
       register: backup_trigger_result
-      
+      # 💥 FIX: Force this task to run on the Ansible controller (where Python/URI is installed)
+      # to avoid the WinRM deserialization error.
+      delegate_to: localhost 
+
     - name: 🔍 Find the newest backup file (wait up to 5 minutes for creation)
       ansible.windows.win_find:
         paths: "{{ local_backup_path }}"
@@ -36,6 +41,7 @@
         sort_by: ctime
         sort_order: desc
       register: found_files
+      # Check if the file exists AND if its creation time is within the last 5 minutes (300 seconds)
       until: found_files.files | length > 0 and (found_files.files[0].creation_time | to_datetime) > (ansible_date_time.epoch | int - 300) | to_datetime(format='%s')
       retries: 30 # Retry 30 times
       delay: 10   # Wait 10 seconds between retries (5 minutes total)
@@ -48,8 +54,8 @@
       ansible.windows.win_copy:
         src: "{{ newest_backup_file }}"
         dest: "{{ network_share_path }}"
-        remote_src: true # Tells Ansible to copy a file from the remote host
-        
+        remote_src: true # Tells Ansible to copy a file from the remote host (server2k19)
+
     - name: 🧹 Clean up old local backup files (keeping only the newest one)
       ansible.windows.win_find:
         paths: "{{ local_backup_path }}"
