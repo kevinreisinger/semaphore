@@ -3,14 +3,14 @@
   hosts: server2k19.reisingers.com
   become: true
   vars:
-    jellyfin_url: "http://192.168.1.100:8096"
-    jellyfin_api_key: "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6" # ⚠️ REPLACE THIS
+    jellyfin_url: "http://server2k19.reisingers.com:8096"
+    jellyfin_api_key: "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"
     
     # Default path for Windows Service Install (adjust if needed)
     local_backup_path: "C:\\ProgramData\\Jellyfin\\Server\\data\\backups" 
     
     # Destination Network Share (use a UNC path)
-    network_share_path: "\\\\your-nas\\backups\\jellyfin" # ⚠️ REPLACE THIS
+    network_share_path: "\\\\your-nas\\backups\\jellyfin"
     
     temp_zip_pattern: 'jellyfin-backup-*.zip'
     
