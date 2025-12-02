@@ -2,6 +2,7 @@
 - name: Automated Jellyfin Backup and Network Transfer
   hosts: server2k19.reisingers.com
   become: true # Ensures tasks requiring elevated permissions (win_copy to network share) can execute
+  become_method: runas
   
   vars:
     jellyfin_url: "http://server2k19.reisingers.com:8096"
