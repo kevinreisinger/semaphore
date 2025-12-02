@@ -1,28 +1,23 @@
 ---
 - name: Automated Jellyfin Backup (Local Staging + Explicit Share Credentials)
-  # Target the specific Windows Server where Jellyfin is installed
   hosts: server2k19.reisingers.com
   gather_facts: no
 
   vars:
     # --- JELLYFIN & LOCAL CONFIGURATION ---
-    jellyfin_service_name: "JellyfinServer" # Standard service name
-    # Default data path for a standard Windows installation
+    jellyfin_service_name: "JellyfinServer"
     jellyfin_data_path: "C:\\ProgramData\\Jellyfin\\Server" 
-    local_backup_root: "C:\\Temp\\Jellyfin_Backup_Root" # Use a dedicated temp location
+    local_backup_root: "C:\\Temp\\Jellyfin_Backup_Root"
     local_staging_path: "{{ local_backup_root }}\\Staging"
-    max_backups_to_keep: 10 # Keep 10 backups on the network share
+    max_backups_to_keep: 10
     
     # --- NETWORK SHARE CONFIGURATION ---
-    # NOTE: These values must be provided securely at runtime (e.g., via Ansible Vault/Semaphore)
-    share_username: "" # Expected to be passed as ansible_share_username
-    share_password: "" # Expected to be passed as ansible_share_password
+    share_username: ""
+    share_password: ""
     final_network_share: "\\\\kevireis-home\\i$\\Applications\\Jellyfin\\Backup"
-    
-    # Drive letter for temporary mapping (Must be unused)
-    mapped_drive_letter: "Y" # Using Y: to avoid potential Z: conflict
+    mapped_drive_letter: "Y"
 
-    # Internal variable generation (uses controller time for unique name)
+    # Internal variable generation
     current_timestamp: "{{ lookup('pipe', 'date +%Y-%m-%d_%H-%M') }}"
     local_backup_file: "{{ local_backup_root }}\\{{ 'Jellyfin_Backup_' + current_timestamp + '.zip' }}"
     final_backup_file: "{{ mapped_drive_letter }}:\\{{ 'Jellyfin_Backup_' + current_timestamp + '.zip' }}"
@@ -51,7 +46,9 @@
           $finalBackupFile = '{{ final_backup_file }}'
           $shareUsername = '{{ share_username }}'
           $sharePassword = '{{ share_password }}'
-          $cacheExclusions = @('cache', 'temp', 'metadata') # Folders to exclude from backup
+          
+          # 💥 CRITICAL FIX: Only exclude the cache/temp folders to ensure the 4GB 'metadata' folder is included.
+          $cacheExclusions = @('cache', 'temp', 'data\cache') 
           
           # --- Helper Functions ---
           function Restart-Services {
@@ -64,15 +61,14 @@
           Stop-Service -Name $jellyfinService -Force -ErrorAction Stop
           Start-Sleep -Seconds 5
           
-          # --- 2. Copy Jellyfin data (excluding cache/temp) to staging ---
+          # --- 2. Copy Jellyfin data (EXCLUDING CACHE ONLY) to staging ---
           Write-Host "Copying Jellyfin data from $jellyfinDataPath to staging folder $localStagingPath..."
-          # Use robocopy with exclusions for cache/temp/metadata
-          # /MIR (Mirror) is powerful, but we must ensure we exclude the necessary subdirectories.
+          # Robocopy now mirrors the source, excluding only the specified cache folders.
           robocopy "$jellyfinDataPath" "$localStagingPath" /MIR /XD $cacheExclusions | Out-Null
           
           # Check staging contents
           $StagingCount = (Get-ChildItem -Path $localStagingPath -Force | Measure-Object).Count
-          if ($StagingCount -lt 5) { # Check for a minimum count (e.g., 5 essential folders)
+          if ($StagingCount -lt 5) {
               Write-Host "CRITICAL ERROR: Staging folder appears nearly empty or inaccessible. Source path ($jellyfinDataPath) is likely incorrect. Exiting."
               Restart-Services
               exit 1
@@ -83,7 +79,6 @@
           Write-Host "Creating ZIP backup at $localBackupFile ..."
           try {
               if (Test-Path $localBackupFile) { Remove-Item $localBackupFile -Force }
-              # Compress all contents of staging folder
               Get-ChildItem -Path "$localStagingPath\*" | Compress-Archive -DestinationPath $localBackupFile -Force
           }
           catch {
