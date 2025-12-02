@@ -1,83 +1,141 @@
 ---
-- name: 1. API Trigger Jellyfin Backup (Run on Controller)
-  hosts: localhost
-  gather_facts: no
-  
-  vars:
-    # 🔑 FIX: Place connection variables inside the 'vars:' block.
-    # Setting ansible_connection: local and ansible_user: "" forces the local connection 
-    # and prevents inheritance of WinRM settings from the Windows play.
-    ansible_connection: local
-    ansible_user: "" 
-    
-    # Use the Windows server's details to access the Jellyfin endpoint
-    jellyfin_url: "http://server2k19.reisingers.com:8096"
-    jellyfin_api_key: "ba76d7d9312744a89f6ba3ed85a20921"
-
-  tasks:
-    - name: 📞 Trigger Jellyfin Built-in Backup via API
-      ansible.builtin.uri:
-        url: "{{ jellyfin_url }}/Backup/Create"
-        method: POST
-        headers:
-          X-MediaBrowser-Token: "{{ jellyfin_api_key }}"
-          Content-Type: application/json
-        body: '{"Metadata": true, "Trickplay": false, "Subtitles": false, "Database": true}'
-        body_format: json
-        status_code: 200
-      register: backup_trigger_result
-      
-# ---------------------------------------------------------------------------------------
-
-- name: 2. Copy Backup to Network Share and Cleanup (Run on Windows Host)
+- name: Automated Jellyfin Backup (Local Staging + Explicit Share Credentials)
+  # Target the specific Windows Server where Jellyfin is installed
   hosts: server2k19.reisingers.com
-  gather_facts: yes
-  
+  gather_facts: no
+
   vars:
-    local_backup_path: "C:\\ProgramData\\Jellyfin\\Server\\data\\backups" 
-    network_share_path: "\\\\kevireis-home\\i$\\Applications\\Jellyfin\\Backup"
-    temp_zip_pattern: 'jellyfin-backup-*.zip'
+    # --- JELLYFIN & LOCAL CONFIGURATION ---
+    jellyfin_service_name: "JellyfinServer" # Standard service name
+    # Default data path for a standard Windows installation
+    jellyfin_data_path: "C:\\ProgramData\\Jellyfin\\Server" 
+    local_backup_root: "C:\\Temp\\Jellyfin_Backup_Root" # Use a dedicated temp location
+    local_staging_path: "{{ local_backup_root }}\\Staging"
+    max_backups_to_keep: 10 # Keep 10 backups on the network share
     
-    # Credentials for accessing the network share (Must be supplied externally)
-    share_username: "" 
-    share_password: "" 
-    retention_days: 7
+    # --- NETWORK SHARE CONFIGURATION ---
+    # NOTE: These values must be provided securely at runtime (e.g., via Ansible Vault/Semaphore)
+    share_username: "" # Expected to be passed as ansible_share_username
+    share_password: "" # Expected to be passed as ansible_share_password
+    final_network_share: "\\\\kevireis-home\\i$\\Applications\\Jellyfin\\Backup"
+    
+    # Drive letter for temporary mapping (Must be unused)
+    mapped_drive_letter: "Y" # Using Y: to avoid potential Z: conflict
+
+    # Internal variable generation (uses controller time for unique name)
+    current_timestamp: "{{ lookup('pipe', 'date +%Y-%m-%d_%H-%M') }}"
+    local_backup_file: "{{ local_backup_root }}\\{{ 'Jellyfin_Backup_' + current_timestamp + '.zip' }}"
+    final_backup_file: "{{ mapped_drive_letter }}:\\{{ 'Jellyfin_Backup_' + current_timestamp + '.zip' }}"
 
   tasks:
-    - name: 🔍 Find the newest backup file (wait up to 5 minutes for creation)
-      ansible.windows.win_find:
-        paths: "{{ local_backup_path }}"
-        file_type: file
-        pattern: "{{ temp_zip_pattern }}"
-        sort_by: ctime
-        sort_order: desc
-      register: found_files
-      until: found_files.files | length > 0 and (found_files.files[0].creation_time | to_datetime) > (ansible_date_time.epoch | int - 300) | to_datetime(format='%s')
-      retries: 30
-      delay: 10
 
-    - name: 📁 Set variable for the newest backup file
-      ansible.builtin.set_fact:
-        newest_backup_file: "{{ found_files.files[0].path }}"
-        
-    - name: 📤 Copy the newest backup file to the network share
-      ansible.windows.win_copy:
-        src: "{{ newest_backup_file }}"
-        dest: "{{ network_share_path }}"
-        remote_src: true
-        
-    - name: 🧹 Clean up old local backup files (older than {{ retention_days }} days)
-      ansible.windows.win_find:
-        paths: "{{ local_backup_path }}"
-        file_type: file
-        age: "{{ retention_days }}d"
-        pattern: "{{ temp_zip_pattern }}"
-      register: old_local_backups
-
-    - name: 🗑️ Delete found old local backup files
+    - name: Ensure local temporary and staging directories exist
       ansible.windows.win_file:
-        path: "{{ item.path }}"
-        state: absent
-      loop: "{{ old_local_backups.files }}"
-      loop_control:
-        label: "Deleting local file {{ item.path | split('\\') | last }}"
+        path: "{{ item }}"
+        state: directory
+      loop:
+        - "{{ local_backup_root }}"
+        - "{{ local_staging_path }}"
+
+    - name: Execute Jellyfin Backup and Network Copy Script (Single PowerShell Block)
+      ansible.windows.win_powershell:
+        script: |
+          # --- Configuration (Pulled from Ansible variables) ---
+          $jellyfinService = '{{ jellyfin_service_name }}'
+          $jellyfinDataPath = '{{ jellyfin_data_path }}'
+          $localStagingPath = '{{ local_staging_path }}'
+          $localBackupFile = '{{ local_backup_file }}'
+          $maxBackups = {{ max_backups_to_keep }}
+          $finalNetworkShare = '{{ final_network_share }}'
+          $mappedDriveLetter = '{{ mapped_drive_letter }}'
+          $finalBackupFile = '{{ final_backup_file }}'
+          $shareUsername = '{{ share_username }}'
+          $sharePassword = '{{ share_password }}'
+          $cacheExclusions = @('cache', 'temp', 'metadata') # Folders to exclude from backup
+          
+          # --- Helper Functions ---
+          function Restart-Services {
+              Write-Host "Attempting to restart Jellyfin Media Server service..."
+              Start-Service -Name $jellyfinService -ErrorAction SilentlyContinue
+          }
+          
+          # --- 1. Stop Jellyfin service ---
+          Write-Host "Stopping Jellyfin Media Server service ($jellyfinService)..."
+          Stop-Service -Name $jellyfinService -Force -ErrorAction Stop
+          Start-Sleep -Seconds 5
+          
+          # --- 2. Copy Jellyfin data (excluding cache/temp) to staging ---
+          Write-Host "Copying Jellyfin data from $jellyfinDataPath to staging folder $localStagingPath..."
+          # Use robocopy with exclusions for cache/temp/metadata
+          # /MIR (Mirror) is powerful, but we must ensure we exclude the necessary subdirectories.
+          robocopy "$jellyfinDataPath" "$localStagingPath" /MIR /XD $cacheExclusions | Out-Null
+          
+          # Check staging contents
+          $StagingCount = (Get-ChildItem -Path $localStagingPath -Force | Measure-Object).Count
+          if ($StagingCount -lt 5) { # Check for a minimum count (e.g., 5 essential folders)
+              Write-Host "CRITICAL ERROR: Staging folder appears nearly empty or inaccessible. Source path ($jellyfinDataPath) is likely incorrect. Exiting."
+              Restart-Services
+              exit 1
+          }
+          Write-Host "Staging successful. Items copied: $StagingCount"
+
+          # --- 3. Create ZIP from staging ---
+          Write-Host "Creating ZIP backup at $localBackupFile ..."
+          try {
+              if (Test-Path $localBackupFile) { Remove-Item $localBackupFile -Force }
+              # Compress all contents of staging folder
+              Get-ChildItem -Path "$localStagingPath\*" | Compress-Archive -DestinationPath $localBackupFile -Force
+          }
+          catch {
+              Write-Host "CRITICAL ERROR: Failed to compress ZIP. $($_.Exception.Message). Exiting."
+              Restart-Services
+              exit 1
+          }
+
+          # --- 4. Clean staging folder ---
+          Write-Host "Cleaning up staging folder $localStagingPath..."
+          Remove-Item "$localStagingPath\*" -Recurse -Force
+
+          # --- 5. Restart Jellyfin service ---
+          Restart-Services
+          
+          # --- 6. Map Network Drive and Copy ---
+          Write-Host "Attempting to map network drive ${mappedDriveLetter}: to ${finalNetworkShare}..."
+          cmd.exe /c net use ${mappedDriveLetter}: /delete /y | Out-Null
+          cmd.exe /c net use ${mappedDriveLetter}: "${finalNetworkShare}" "${sharePassword}" /user:"${shareUsername}" /persistent:no
+          
+          if ($LASTEXITCODE -ne 0) {
+              Write-Host "CRITICAL ERROR: Failed to map network drive. Code $LASTEXITCODE. Check share credentials. Exiting."
+              Remove-Item $localBackupFile -Force -ErrorAction SilentlyContinue
+              exit 1
+          }
+          Write-Host "Network drive mapped successfully."
+
+          Write-Host "Copying local backup to network share..."
+          try {
+              Copy-Item -Path $localBackupFile -Destination $finalBackupFile -Force
+          } catch {
+              Write-Host "CRITICAL ERROR: Failed to copy file to network share. $($_.Exception.Message)"
+              cmd.exe /c net use ${mappedDriveLetter}: /delete /y | Out-Null
+              Remove-Item $localBackupFile -Force -ErrorAction SilentlyContinue
+              exit 1
+          }
+
+          # --- 7. Retention on network share ---
+          Write-Host "Cleaning up old NETWORK backups, keeping only the last $maxBackups..."
+          $backups = Get-ChildItem -Path ${mappedDriveLetter}:\\ -Filter "Jellyfin_Backup_*.zip" | Sort-Object LastWriteTime -Descending
+          if ($backups.Count -gt $maxBackups) {
+              $backups | Select-Object -Skip $maxBackups | ForEach-Object {
+                  Write-Host "Deleting old network backup: $($_.FullName)"
+                  Remove-Item $_.FullName -Force
+              }
+          }
+
+          # --- 8. Final Cleanup (Local ZIP and Drive) ---
+          Write-Host "Removing local file $localBackupFile and unmapping drive ${mappedDriveLetter}: ..."
+          Remove-Item $localBackupFile -Force -ErrorAction SilentlyContinue
+          cmd.exe /c net use ${mappedDriveLetter}: /delete /y | Out-Null
+          
+          Write-Host "Jellyfin Backup and Transfer completed successfully!"
+
+      register: ps_output
