@@ -14,19 +14,22 @@
     
   tasks:
     - name: 📁 Ensure the C:\Windows\Scripts directory exists
+      # Good practice to ensure the path is ready.
       ansible.windows.win_file:
         path: C:\Windows\Scripts
         state: directory
         
-    - name: ⚙️ Execute the remote VSS copy script using free-form win_shell
-      # 🎯 FIX: Removing 'win_shell:' and 'cmd: |' and using the free-form string
+    - name: ⚙️ Execute the remote VSS copy script using win_shell
+      # Uses the free-form command style with win_shell to prevent the 'Missing required argument' error, 
+      # and explicitly calls the 64-bit PowerShell executable for stability with WMI/VSS operations.
       ansible.windows.win_shell: |
-          & "{{ remote_script_path }}" `
+          C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -ExecutionPolicy Bypass -File "{{ remote_script_path }}" `
           -SourcePath '{{ source_dir }}' `
           -DestinationPath '{{ dest_dir }}' `
           -Volume '{{ target_volume }}'
       register: script_output
       
     - name: 🖥️ Display script output
+      # Displays the success messages or error details from the PowerShell script.
       ansible.builtin.debug:
         var: script_output.stdout_lines
