@@ -1,5 +1,5 @@
 ---
-- name: Create New File Test (Windows)
+- name: Create New File Test
   hosts: windows
   gather_facts: false
   tasks:
