@@ -1,6 +1,6 @@
 ---
 - name: Copy Virtual Hard Disks folder to N:\ with overwrite
-  hosts: server2k25.reisingers.com
+  hosts: server2k25
   gather_facts: no
 
   vars:
@@ -19,7 +19,8 @@
         robocopy "{{ source_path }}" "{{ dest_path }}"
         /MIR /R:3 /W:5 /NFL /NDL /NP /TEE
       register: robocopy_result
-      changed_when: "'Copied' in robocopy_result.stdout or 'Newer' in robocopy_result.stdout"
+      failed_when: robocopy_result.rc >= 8
+      changed_when: robocopy_result.rc != 0
 
     - name: Show robocopy output
       debug:
