@@ -1,40 +1,30 @@
 ---
-- name: "Backup Hyper-V VM Disks (Requires stopping the VM)"
+- name: Execute HyperV Live Disk Backup via PowerShell VSS Script
   hosts: server2k25.reisingers.com
-  gather_facts: false 
-  vars:
-    vm_name: 'dc2k25'
-    source_path: 'C:\ProgramData\Microsoft\Windows\Virtual Hard Disks'
-    dest_path: 'N:\Virtual Hard Disks'
+  gather_facts: false
   
-  # 🎯 The fix: Force the collection path for this execution
-  environment:
-    ANSIBLE_COLLECTIONS_PATHS: "/usr/lib/python3/dist-packages"
+  vars:
+    # Source paths for the Ansible Playbook
+    target_volume: 'C' # Just the drive letter of the volume containing the VHDX files
+    source_dir: 'C:\ProgramData\Microsoft\Windows\Virtual Hard Disks'
+    dest_dir: 'N:\Virtual Hard Disks'
     
   tasks:
-    
-    # --- STEP 1: STOP THE VIRTUAL MACHINE ---
-    - name: Stop the Virtual Machine '{{ vm_name }}' before backup
-      ansible.windows.win_hyperv_vm: 
-        name: "{{ vm_name }}"
-        state: stopped 
-      register: vm_stop_result
-      
-    # --- STEP 2: PERFORM THE COPY OPERATION ---
-    - name: Ensure the destination directory exists (N:\Virtual Hard Disks)
-      ansible.windows.win_file:
-        path: "{{ dest_path }}"
-        state: directory
-        
-    - name: Copy the source directory content to the destination (and overwrite)
+    - name: Copy backup_hyperv.ps1 script to target server
       ansible.windows.win_copy:
-        src: "{{ source_path }}"
-        dest: "{{ dest_path }}"
-        force: yes
-        remote_src: yes
+        # Assuming you saved the PowerShell script above in a local 'scripts' directory
+        src: ./scripts/backup_hyperv.ps1 
+        dest: C:\Temp\backup_hyperv.ps1
+        
+    - name: Execute the VSS copy script and pass parameters
+      ansible.windows.win_powershell:
+        path: C:\Temp\backup_hyperv.ps1
+        arguments: 
+          - "-SourcePath '{{ source_dir }}'"
+          - "-DestinationPath '{{ dest_dir }}'"
+          - "-Volume '{{ target_volume }}'"
+      register: script_output
       
-    # --- STEP 3: START THE VIRTUAL MACHINE ---
-    - name: Start the Virtual Machine '{{ vm_name }}' after backup
-      ansible.windows.win_hyperv_vm:
-        name: "{{ vm_name }}"
-        state: started
+    - name: Display script output (to confirm VSS success)
+      ansible.builtin.debug:
+        var: script_output.stdout_lines
