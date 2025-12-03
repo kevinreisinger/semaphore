@@ -1,26 +1,22 @@
 ---
-- name: Copy 'Virtual Hard Disks' directory from C: to N: on Windows Server
+- name: "Copy 'Virtual Hard Disks' directory from C: to N: on Windows Server"
   hosts: server2k25.reisingers.com
-  gather_facts: false # Optional, but good practice if facts aren't needed
+  gather_facts: false 
   vars:
     source_path: 'C:\ProgramData\Microsoft\Windows\Virtual Hard Disks'
     dest_path: 'N:\Virtual Hard Disks'
     
   tasks:
     - name: Ensure the destination directory exists (N:\Virtual Hard Disks)
-      # The win_file module is used to ensure the directory structure exists on the target.
       ansible.windows.win_file:
         path: "{{ dest_path }}"
         state: directory
         
-    - name: Copy the source directory content to the destination
-      # The win_copy module is used for the actual file/directory transfer.
+    - name: Copy the source directory content to the destination (and overwrite)
       ansible.windows.win_copy:
         src: "{{ source_path }}"
         dest: "{{ dest_path }}"
         # Set `force: yes` to ensure the copy operation overwrites existing files/directories.
-        # This is the equivalent of your "overwrite" requirement.
         force: yes
         # Set `remote_src: yes` because the source is already on the target server.
-        # win_copy, by default, assumes the source is on the Ansible control node.
         remote_src: yes
