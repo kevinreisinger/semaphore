@@ -1,35 +1,26 @@
 ---
-- name: Execute Remote HyperV VSS Backup Script
-  hosts: server2k25.reisingers.com
-  gather_facts: false
-  
+- name: Copy Virtual Hard Disks folder to N:\ with overwrite
+  hosts: server2k25
+  gather_facts: no
+
   vars:
-    # Variables for the PowerShell script arguments
-    target_volume: 'C' 
-    source_dir: 'C:\ProgramData\Microsoft\Windows\Virtual Hard Disks'
-    dest_dir: 'N:\Virtual Hard Disks'
-    
-    # Path where the script is located on the Windows server
-    remote_script_path: 'C:\Windows\Scripts\backup_hyperv.ps1' 
-    
+    source_path: "C:\\ProgramData\\Microsoft\\Windows\\Virtual Hard Disks"
+    dest_path:   "N:\\Virtual Hard Disks"
+
   tasks:
-    - name: 📁 Ensure the C:\Windows\Scripts directory exists
-      # Good practice to ensure the path is ready.
-      ansible.windows.win_file:
-        path: C:\Windows\Scripts
+
+    - name: Ensure destination folder exists
+      win_file:
+        path: "{{ dest_path }}"
         state: directory
-        
-    - name: ⚙️ Execute the remote VSS copy script using win_shell
-      # Uses the free-form command style with win_shell to prevent the 'Missing required argument' error, 
-      # and explicitly calls the 64-bit PowerShell executable for stability with WMI/VSS operations.
-      ansible.windows.win_shell: |
-          C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -ExecutionPolicy Bypass -File "{{ remote_script_path }}" `
-          -SourcePath '{{ source_dir }}' `
-          -DestinationPath '{{ dest_dir }}' `
-          -Volume '{{ target_volume }}'
-      register: script_output
-      
-    - name: 🖥️ Display script output
-      # Displays the success messages or error details from the PowerShell script.
-      ansible.builtin.debug:
-        var: script_output.stdout_lines
+
+    - name: Copy VHDX files using robocopy (with overwrite)
+      win_command: >
+        robocopy "{{ source_path }}" "{{ dest_path }}"
+        /MIR /R:3 /W:5 /NFL /NDL /NP /TEE
+      register: robocopy_result
+      changed_when: "'Copied' in robocopy_result.stdout or 'Newer' in robocopy_result.stdout"
+
+    - name: Show robocopy output
+      debug:
+        var: robocopy_result.stdout
