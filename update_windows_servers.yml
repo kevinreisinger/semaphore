@@ -1,5 +1,5 @@
 ---
-- name: Windows Updates with Retry, Auto Report, and Reboot
+- name: Upate Windows Servers
   hosts: windows
   gather_facts: yes
   vars:
