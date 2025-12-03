@@ -1,5 +1,5 @@
 ---
-- name: Automated Jellyfin Backup (Local Staging + Explicit Share Credentials)
+- name: Backup Jellyfin
   hosts: server2k19.reisingers.com
   gather_facts: no
 
