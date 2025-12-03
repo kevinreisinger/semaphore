@@ -1,5 +1,5 @@
 ---
-- name: Run updates on Linux and Windows, then email summary
+- name: Update All Servers (Windows & Linux)
   hosts: all
   gather_facts: no
   vars:
