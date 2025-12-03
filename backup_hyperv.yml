@@ -1,29 +1,33 @@
 ---
-- name: Execute HyperV Live Disk Backup via PowerShell VSS Script
+- name: Execute Remote HyperV VSS Backup Script
   hosts: server2k25.reisingers.com
   gather_facts: false
   
   vars:
-    target_volume: 'C' 
+    # Variables for the PowerShell script arguments
+    target_volume: 'C' # Volume where VHDX files reside (C: drive)
     source_dir: 'C:\ProgramData\Microsoft\Windows\Virtual Hard Disks'
     dest_dir: 'N:\Virtual Hard Disks'
     
+    # Path where you manually placed the backup_hyperv.ps1 script
+    remote_script_path: 'C:\Windows\Scripts\backup_hyperv.ps1' 
+    
   tasks:
-    - name: Copy backup_hyperv.ps1 script to target server
-      ansible.windows.win_copy:
-        # Target your local script in the 'scripts' subdirectory
-        src: ./scripts/backup_hyperv.ps1 
-        dest: C:\Temp\backup_hyperv.ps1
+    - name: 📁 Ensure the C:\Windows\Scripts directory exists
+      # Note: This is a safe path, but checking ensures Ansible won't fail if it's missing.
+      ansible.windows.win_file:
+        path: C:\Windows\Scripts
+        state: directory
         
-    - name: Execute the VSS copy script and pass parameters
+    - name: ⚙️ Execute the remote VSS copy script
       ansible.windows.win_powershell:
-        path: C:\Temp\backup_hyperv.ps1
+        path: "{{ remote_script_path }}"
         arguments: 
           - "-SourcePath '{{ source_dir }}'"
           - "-DestinationPath '{{ dest_dir }}'"
           - "-Volume '{{ target_volume }}'"
       register: script_output
       
-    - name: Display script output (to confirm VSS success)
+    - name: 🖥️ Display script output to confirm VSS success
       ansible.builtin.debug:
         var: script_output.stdout_lines
