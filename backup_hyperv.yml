@@ -1,27 +1,26 @@
 ---
-- name: Backup Hyper-V VM Disks (Requires stopping the VM)
+- name: "Backup Hyper-V VM Disks (Requires stopping the VM)"
   hosts: server2k25.reisingers.com
   gather_facts: false 
   vars:
-    vm_name: 'dc2k25'  # <--- Change this to the name of your Virtual Machine
+    vm_name: 'dc2k25'
     source_path: 'C:\ProgramData\Microsoft\Windows\Virtual Hard Disks'
     dest_path: 'N:\Virtual Hard Disks'
+  
+  # 🎯 The fix: Force the collection path for this execution
+  environment:
+    ANSIBLE_COLLECTIONS_PATHS: "/usr/lib/python3/dist-packages"
     
   tasks:
     
     # --- STEP 1: STOP THE VIRTUAL MACHINE ---
     - name: Stop the Virtual Machine '{{ vm_name }}' before backup
-      ansible.windows.win_hyperv_vm:
+      ansible.windows.win_hyperv_vm: 
         name: "{{ vm_name }}"
-        state: stopped # Use 'stopped' to turn it off cleanly
+        state: stopped 
       register: vm_stop_result
       
-    - name: Display VM stop result (Optional)
-      ansible.builtin.debug:
-        msg: "VM was successfully stopped or was already off."
-      when: vm_stop_result.changed or not vm_stop_result.failed
-
-    # --- STEP 2: PERFORM THE COPY OPERATION (Original Task) ---
+    # --- STEP 2: PERFORM THE COPY OPERATION ---
     - name: Ensure the destination directory exists (N:\Virtual Hard Disks)
       ansible.windows.win_file:
         path: "{{ dest_path }}"
@@ -38,4 +37,4 @@
     - name: Start the Virtual Machine '{{ vm_name }}' after backup
       ansible.windows.win_hyperv_vm:
         name: "{{ vm_name }}"
-        state: started # Bring the VM back online
+        state: started
