@@ -1,5 +1,5 @@
 ---
-- name: Check Uptime for All Servers (Linux and Windows) and Display Combined Summary
+- name: Check Uptime For All Servers
   # Target all hosts in both defined groups
   hosts: linux:windows
   gather_facts: yes # Gather facts for Linux (ansible_uptime_seconds)
