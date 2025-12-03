@@ -4,15 +4,14 @@
   gather_facts: false
   
   vars:
-    # Source paths for the Ansible Playbook
-    target_volume: 'C' # Just the drive letter of the volume containing the VHDX files
+    target_volume: 'C' 
     source_dir: 'C:\ProgramData\Microsoft\Windows\Virtual Hard Disks'
     dest_dir: 'N:\Virtual Hard Disks'
     
   tasks:
     - name: Copy backup_hyperv.ps1 script to target server
       ansible.windows.win_copy:
-        # Assuming you saved the PowerShell script above in a local 'scripts' directory
+        # Target your local script in the 'scripts' subdirectory
         src: ./scripts/backup_hyperv.ps1 
         dest: C:\Temp\backup_hyperv.ps1
         
