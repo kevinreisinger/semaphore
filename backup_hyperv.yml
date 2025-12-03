@@ -18,10 +18,9 @@
         path: C:\Windows\Scripts
         state: directory
         
-    - name: ⚙️ Execute the remote VSS copy script using win_shell
-      ansible.windows.win_shell:
-        # Construct the PowerShell command string to execute the script and pass args
-        cmd: |
+    - name: ⚙️ Execute the remote VSS copy script using free-form win_shell
+      # 🎯 FIX: Removing 'win_shell:' and 'cmd: |' and using the free-form string
+      ansible.windows.win_shell: |
           & "{{ remote_script_path }}" `
           -SourcePath '{{ source_dir }}' `
           -DestinationPath '{{ dest_dir }}' `
