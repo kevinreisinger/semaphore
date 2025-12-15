@@ -1,6 +1,5 @@
 ---
 - name: Backup Plex
-  # Target the specific Windows Server where Plex is installed
   hosts: server2k19.reisingers.com
   gather_facts: no
 
