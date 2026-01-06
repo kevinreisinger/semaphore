@@ -4,16 +4,16 @@
   become: yes
   vars:
     # --- CONFIGURATION ---
-    container_name: "music-assistant"
+    container_name: "musicassistant"
     
     # Path ON THE HOST where MA stores data
-    local_data_path: "/opt/music-assistant/data"
+    local_data_path: "/opt/ma/data"
     
     # Temporary location on the host to create the zip before moving it
     temp_backup_dir: "/tmp/ma_backups"
     
     # SMB Share Details
-    smb_share_path: "//192.168.1.50/backups"
+    smb_share_path: "//10.11.202.15/i$/Applications/Docker/Maoslxc01/Backup/Musicassistant"
     smb_username: "backupuser"
     smb_password: "your_password_here" 
     smb_mount_point: "/mnt/temp_smb_backup"
