@@ -1,6 +1,6 @@
 ---
 - name: Backup Music Assistant to SMB with Retention
-  hosts: docker_hosts
+  hosts: maoslxc01.reisingers.com
   become: yes
   vars:
     # --- CONFIGURATION ---
