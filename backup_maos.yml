@@ -1,0 +1,114 @@
+---
+- name: Backup Music Assistant to SMB with Retention
+  hosts: docker_hosts
+  become: yes
+  vars:
+    # --- CONFIGURATION ---
+    container_name: "music-assistant"
+    
+    # Path ON THE HOST where MA stores data
+    local_data_path: "/opt/music-assistant/data"
+    
+    # Temporary location on the host to create the zip before moving it
+    temp_backup_dir: "/tmp/ma_backups"
+    
+    # SMB Share Details
+    smb_share_path: "//192.168.1.50/backups"
+    smb_username: "backupuser"
+    smb_password: "your_password_here" 
+    smb_mount_point: "/mnt/temp_smb_backup"
+    
+    # Backup Naming
+    timestamp: "{{ ansible_date_time.date }}_{{ ansible_date_time.hour }}-{{ ansible_date_time.minute }}"
+    backup_filename: "ma_backup_{{ timestamp }}.tar.gz"
+    
+    # Retention Settings
+    retention_days: 10
+
+  tasks:
+    # 1. PREPARATION
+    - name: Ensure temporary backup directory exists
+      file:
+        path: "{{ temp_backup_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Ensure mount point directory exists
+      file:
+        path: "{{ smb_mount_point }}"
+        state: directory
+        mode: '0755'
+
+    # 2. STOP CONTAINER
+    - name: Stop Music Assistant container
+      community.docker.docker_container:
+        name: "{{ container_name }}"
+        state: stopped
+
+    # 3. COMPRESS DATA
+    - name: Compress data directory
+      archive:
+        path: "{{ local_data_path }}/*"
+        dest: "{{ temp_backup_dir }}/{{ backup_filename }}"
+        format: gz
+      register: archive_status
+
+    # 4. START CONTAINER (Restart immediately to minimize downtime)
+    - name: Start Music Assistant container
+      community.docker.docker_container:
+        name: "{{ container_name }}"
+        state: started
+
+    # 5. MOUNT SMB SHARE
+    - name: Mount SMB Share
+      ansible.posix.mount:
+        src: "{{ smb_share_path }}"
+        path: "{{ smb_mount_point }}"
+        opts: "username={{ smb_username }},password={{ smb_password }},vers=3.0,iocharset=utf8"
+        fstype: cifs
+        state: mounted
+
+    # 6. COPY TO SMB
+    - name: Copy backup to SMB share
+      copy:
+        src: "{{ temp_backup_dir }}/{{ backup_filename }}"
+        dest: "{{ smb_mount_point }}/{{ backup_filename }}"
+        remote_src: yes
+      when: archive_status.changed
+
+    # --- RETENTION POLICY START ---
+    
+    # 7. FIND OLD BACKUPS
+    - name: Find backups older than {{ retention_days }} days
+      find:
+        paths: "{{ smb_mount_point }}"
+        patterns: "ma_backup_*.tar.gz"  # Only look for files matching this pattern
+        age: "{{ retention_days }}d"
+        recurse: no
+      register: old_backups
+
+    # 8. DELETE OLD BACKUPS
+    - name: Delete old backups
+      file:
+        path: "{{ item.path }}"
+        state: absent
+      with_items: "{{ old_backups.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+
+    # --- RETENTION POLICY END ---
+
+    # 9. CLEANUP
+    - name: Unmount SMB Share
+      ansible.posix.mount:
+        path: "{{ smb_mount_point }}"
+        state: unmounted
+
+    - name: Remove local temporary backup file
+      file:
+        path: "{{ temp_backup_dir }}/{{ backup_filename }}"
+        state: absent
+
+    - name: Display success message
+      debug:
+        msg: "Backup complete. {{ old_backups.matched }} old backups removed."
