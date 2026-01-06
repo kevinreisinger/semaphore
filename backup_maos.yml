@@ -14,7 +14,8 @@
     
     # SMB Share Details
     smb_share_path: "//10.11.202.15/i$/Applications/Docker/Maoslxc01/Backup/Musicassistant"
-    share_username: ""
+    smb_username: "kevireis"
+    smb_domain: "REISINGERS"
     share_password: "" 
     smb_mount_point: "/mnt/temp_smb_backup"
     
@@ -64,7 +65,7 @@
       ansible.posix.mount:
         src: "{{ smb_share_path }}"
         path: "{{ smb_mount_point }}"
-        opts: "username={{ share_username }},password={{ share_password }},vers=3.0,iocharset=utf8"
+        opts: "username={{ smb_username }},password={{ share_password }},domain={{ smb_domain }},vers=3.0,iocharset=utf8"
         fstype: cifs
         state: mounted
 
