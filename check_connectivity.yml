@@ -1,5 +1,5 @@
 ---
-- name: Universal Connectivity and OS Test
+- name: Check Connectivity
   hosts: all
   gather_facts: true  # This is the real "test" - if this fails, the host is unreachable
   ignore_unreachable: true # Prevents the play from stopping if one host fails
