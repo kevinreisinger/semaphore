@@ -22,4 +22,4 @@
 
     - name: Test completed
       ansible.builtin.debug:
-        msg: "Task execution successful on {{ inventory_hostname }}"
+        msg: "Check Connectivity Task execution successful on {{ inventory_hostname }}"
