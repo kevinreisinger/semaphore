@@ -1,5 +1,5 @@
 ---
-- name: Backup GitHub Repositories
+- name: Backup Github
   hosts: localhost
   connection: local
   gather_facts: yes  # Needed for timestamping if you add archiving later
