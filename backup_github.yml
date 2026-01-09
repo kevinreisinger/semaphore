@@ -5,25 +5,21 @@
   gather_facts: no
   vars:
     backup_dest: "~/github-backups"
-    # Ansible reads the key from the environment variable you set in Semaphore
-    ssh_key_content: "{{ lookup('env', 'github_ssh_key') }}"
+    # We use | b64decode to turn the safe string back into a real key
+    ssh_key_content: "{{ lookup('env', 'github_ssh_key') | b64decode }}"
+    # We use a temp path to avoid permission/home-directory confusion
+    key_path: "/tmp/github_deploy_key"
     repositories:
       - name: "semaphore"
         url: "git@github.com:kevinreisinger/semaphore.git"
 
   tasks:
-    - name: Ensure .ssh directory exists
-      ansible.builtin.file:
-        path: "~/.ssh"
-        state: directory
-        mode: '0700'
-
-    - name: Write Private Key to file
+    - name: Write Private Key to temp file
       ansible.builtin.copy:
         content: "{{ ssh_key_content }}"
-        dest: "~/.ssh/id_rsa"
+        dest: "{{ key_path }}"
         mode: '0600'
-      no_log: true # Prevents the key from showing in logs
+      no_log: true
 
     - name: Ensure backup directory exists
       ansible.builtin.file:
@@ -37,15 +33,22 @@
       args:
         creates: "{{ backup_dest }}/{{ item.name }}.git"
       environment:
-        # We point SSH explicitly to the key file we just created
-        GIT_SSH_COMMAND: "ssh -i ~/.ssh/id_rsa -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
+        # We point SSH explicitly to the /tmp/ key file
+        GIT_SSH_COMMAND: "ssh -i {{ key_path }} -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
       loop: "{{ repositories }}"
 
     - name: Update repository if it exists
       ansible.builtin.command:
         cmd: "git --git-dir={{ backup_dest }}/{{ item.name }}.git remote update"
       environment:
-        GIT_SSH_COMMAND: "ssh -i ~/.ssh/id_rsa -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
+        GIT_SSH_COMMAND: "ssh -i {{ key_path }} -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
       loop: "{{ repositories }}"
       when: lookup('ansible.builtin.fileglob', backup_dest + '/' + item.name + '.git/HEAD') | length > 0
+      ignore_errors: yes
+
+    - name: Cleanup Private Key (Security Best Practice)
+      ansible.builtin.file:
+        path: "{{ key_path }}"
+        state: absent
+      # Run this even if previous tasks failed
       ignore_errors: yes
