@@ -2,11 +2,13 @@
 - name: Backup GitHub Repositories
   hosts: localhost
   connection: local
-  gather_facts: no
+  gather_facts: yes  # <--- CHANGED: Must be 'yes' to get the home directory path
   vars:
-    backup_dest: "~/github-backups"
+    # <--- CHANGED: Uses absolute path variable instead of '~'
+    backup_dest: "{{ ansible_user_dir }}/github-backups"
+    
     # Read the environment variable
-    raw_key_content: "{{ lookup('env', 'github_ssh_key') }}"
+    raw_key_content: "{{ lookup('env', 'GITHUB_SSH_KEY') }}"
     key_path: "/tmp/github_deploy_key"
     repositories:
       - name: "semaphore"
@@ -24,12 +26,12 @@
 
     - name: "CHECK: Write key and verify formatting"
       ansible.builtin.copy:
-        # We decode the base64 string back into real text
         content: "{{ raw_key_content | b64decode }}"
         dest: "{{ key_path }}"
         mode: '0600'
       no_log: true 
 
+    # --- BACKUP TASKS ---
     - name: Ensure backup directory exists
       ansible.builtin.file:
         path: "{{ backup_dest }}"
@@ -38,23 +40,26 @@
 
     - name: Clone repository (--mirror)
       ansible.builtin.command:
+        # Now uses the full path, so Git won't get confused
         cmd: "git clone --mirror {{ item.url }} {{ backup_dest }}/{{ item.name }}.git"
       args:
         creates: "{{ backup_dest }}/{{ item.name }}.git"
       environment:
-        # Pointing to the validated key file
         GIT_SSH_COMMAND: "ssh -i {{ key_path }} -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
       loop: "{{ repositories }}"
 
     - name: Update repository if it exists
       ansible.builtin.command:
+        # --git-dir requires an absolute path to work correctly here
         cmd: "git --git-dir={{ backup_dest }}/{{ item.name }}.git remote update"
       environment:
         GIT_SSH_COMMAND: "ssh -i {{ key_path }} -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
       loop: "{{ repositories }}"
-      when: lookup('ansible.builtin.fileglob', backup_dest + '/' + item.name + '.git/HEAD') | length > 0
+      # Robust check to see if the directory exists before trying to update
+      when: (backup_dest + '/' + item.name + '.git') is directory
       ignore_errors: yes
 
+    # --- CLEANUP ---
     - name: Cleanup Private Key
       ansible.builtin.file:
         path: "{{ key_path }}"
