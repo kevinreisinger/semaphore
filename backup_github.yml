@@ -17,29 +17,22 @@
         state: directory
         mode: '0755'
 
-    - name: Ensure .ssh directory exists
-      ansible.builtin.file:
-        path: "~/.ssh"
-        state: directory
-        mode: '0700'
-
-    - name: Add GitHub to known_hosts (Fixes Host Key Verification Error)
-      ansible.builtin.shell: "ssh-keyscan -H github.com >> ~/.ssh/known_hosts"
-      register: keyscan
-      changed_when: keyscan.rc == 0
-      # Only run if github is not already in known_hosts to avoid duplicates
-      when: lookup('file', '~/.ssh/known_hosts', errors='ignore') is not search('github.com')
-
     - name: Clone repository (--mirror) if missing
       ansible.builtin.command:
         cmd: "git clone --mirror {{ item.url }} {{ backup_dest }}/{{ item.name }}.git"
       args:
         creates: "{{ backup_dest }}/{{ item.name }}.git"
+      environment:
+        # This forces SSH to ignore the "Unknown Host" prompt completely
+        GIT_SSH_COMMAND: "ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
       loop: "{{ repositories }}"
 
     - name: Update repository if it already exists
       ansible.builtin.command:
         cmd: "git --git-dir={{ backup_dest }}/{{ item.name }}.git remote update"
+      environment:
+        # Also needed here for updates
+        GIT_SSH_COMMAND: "ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
       loop: "{{ repositories }}"
       # Only run this task if the directory actually exists
       when: lookup('ansible.builtin.fileglob', backup_dest + '/' + item.name + '.git/HEAD') | length > 0
