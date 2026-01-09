@@ -1,0 +1,25 @@
+---
+- name: Universal Connectivity and OS Test
+  hosts: all
+  gather_facts: true  # This is the real "test" - if this fails, the host is unreachable
+  ignore_unreachable: true # Prevents the play from stopping if one host fails
+
+  tasks:
+    - name: Report Operating System
+      ansible.builtin.debug:
+        msg: 
+          - "Success! Connected to {{ inventory_hostname }}"
+          - "Operating System Family: {{ ansible_os_family | default('Unknown') }}"
+          - "OS Distribution: {{ ansible_distribution | default('Unknown') }} {{ ansible_distribution_version | default('') }}"
+
+    - name: Ping Linux/Unix Hosts
+      ansible.builtin.ping:
+      when: ansible_os_family != 'Windows' and ansible_network_os is not defined
+
+    - name: Ping Windows Hosts
+      ansible.windows.win_ping:
+      when: ansible_os_family == 'Windows'
+
+    - name: Test completed
+      ansible.builtin.debug:
+        msg: "Task execution successful on {{ inventory_hostname }}"
