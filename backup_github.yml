@@ -11,9 +11,9 @@
     
     # SMB Share Details (Mapped from Secrets)
     smb_share_path: "{{ lookup('env', 'SMB_PATH') }}"
-    smb_username: "{{ lookup('env', 'SMB_USERNAME') }}"
-    smb_domain: "{{ lookup('env', 'SMB_DOMAIN') }}"
-    share_password: "{{ lookup('env', 'SMB_PASSWORD') }}"
+    smb_username: "kevireis"
+    smb_domain: "REISINGERS"
+    share_password: ""
     smb_mount_point: "/mnt/temp_smb_backup"
 
     # Backup Naming
@@ -24,7 +24,7 @@
     retention_days: 10
 
     # SSH Key Setup
-    ssh_key_content: "{{ lookup('env', 'GITHUB_SSH_KEY') | b64decode }}"
+    ssh_key_content: "{{ lookup('env', 'github_ssh_key') | b64decode }}"
     key_path: "/tmp/github_deploy_key"
 
     # List of Repositories
