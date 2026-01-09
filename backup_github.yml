@@ -5,35 +5,47 @@
   gather_facts: no
   vars:
     backup_dest: "~/github-backups"
+    # Ansible reads the key from the environment variable you set in Semaphore
+    ssh_key_content: "{{ lookup('env', 'github_ssh_key') }}"
     repositories:
       - name: "semaphore"
         url: "git@github.com:kevinreisinger/semaphore.git"
-      # Add more repos here
 
   tasks:
-    - name: Ensure the backup directory exists
+    - name: Ensure .ssh directory exists
+      ansible.builtin.file:
+        path: "~/.ssh"
+        state: directory
+        mode: '0700'
+
+    - name: Write Private Key to file
+      ansible.builtin.copy:
+        content: "{{ ssh_key_content }}"
+        dest: "~/.ssh/id_rsa"
+        mode: '0600'
+      no_log: true # Prevents the key from showing in logs
+
+    - name: Ensure backup directory exists
       ansible.builtin.file:
         path: "{{ backup_dest }}"
         state: directory
         mode: '0755'
 
-    - name: Clone repository (--mirror) if missing
+    - name: Clone repository (--mirror)
       ansible.builtin.command:
         cmd: "git clone --mirror {{ item.url }} {{ backup_dest }}/{{ item.name }}.git"
       args:
         creates: "{{ backup_dest }}/{{ item.name }}.git"
       environment:
-        # This forces SSH to ignore the "Unknown Host" prompt completely
-        GIT_SSH_COMMAND: "ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
+        # We point SSH explicitly to the key file we just created
+        GIT_SSH_COMMAND: "ssh -i ~/.ssh/id_rsa -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
       loop: "{{ repositories }}"
 
-    - name: Update repository if it already exists
+    - name: Update repository if it exists
       ansible.builtin.command:
         cmd: "git --git-dir={{ backup_dest }}/{{ item.name }}.git remote update"
       environment:
-        # Also needed here for updates
-        GIT_SSH_COMMAND: "ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
+        GIT_SSH_COMMAND: "ssh -i ~/.ssh/id_rsa -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
       loop: "{{ repositories }}"
-      # Only run this task if the directory actually exists
       when: lookup('ansible.builtin.fileglob', backup_dest + '/' + item.name + '.git/HEAD') | length > 0
       ignore_errors: yes
