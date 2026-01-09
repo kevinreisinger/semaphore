@@ -8,7 +8,7 @@
     backup_dest: "{{ ansible_user_dir }}/github-backups"
     
     # Read the environment variable
-    raw_key_content: "{{ lookup('env', 'GITHUB_SSH_KEY') }}"
+    raw_key_content: "{{ lookup('env', 'github_ssh_key') }}"
     key_path: "/tmp/github_deploy_key"
     repositories:
       - name: "semaphore"
