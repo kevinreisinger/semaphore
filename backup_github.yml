@@ -1,67 +1,172 @@
 ---
-- name: Backup GitHub Repositories
+- name: Backup GitHub Repositories to SMB with Retention
   hosts: localhost
   connection: local
-  gather_facts: yes  # <--- CHANGED: Must be 'yes' to get the home directory path
+  gather_facts: yes
+  become: yes  # Required for mounting shares and installing packages
   vars:
-    # <--- CHANGED: Uses absolute path variable instead of '~'
-    backup_dest: "{{ ansible_user_dir }}/github-backups"
+    # --- CONFIGURATION ---
+    # Path where Git will mirror the repos locally
+    local_data_path: "{{ ansible_user_dir }}/github-backups"
     
-    # Read the environment variable
-    raw_key_content: "{{ lookup('env', 'github_ssh_key') }}"
+    # SMB Share Details (Mapped from Secrets)
+    smb_share_path: "{{ lookup('env', 'SMB_PATH') }}"
+    smb_username: "{{ lookup('env', 'SMB_USERNAME') }}"
+    smb_domain: "{{ lookup('env', 'SMB_DOMAIN') }}"
+    share_password: "{{ lookup('env', 'SMB_PASSWORD') }}"
+    smb_mount_point: "/mnt/temp_smb_backup"
+
+    # Backup Naming
+    timestamp: "{{ ansible_date_time.date }}_{{ ansible_date_time.hour }}-{{ ansible_date_time.minute }}"
+    backup_filename: "github_backup_{{ timestamp }}.tar.gz"
+    
+    # Retention Settings
+    retention_days: 10
+
+    # SSH Key Setup
+    ssh_key_content: "{{ lookup('env', 'GITHUB_SSH_KEY') | b64decode }}"
     key_path: "/tmp/github_deploy_key"
+
+    # List of Repositories
     repositories:
       - name: "semaphore"
         url: "git@github.com:kevinreisinger/semaphore.git"
+      # Add more repos here...
 
   tasks:
-    # --- SAFETY CHECKS ---
+    # -------------------------------------------------------
+    # 1. PREPARATION & SSH SETUP
+    # -------------------------------------------------------
     - name: "CHECK: Is the GITHUB_SSH_KEY variable set?"
       ansible.builtin.fail:
-        msg: >
-          CRITICAL ERROR: The environment variable 'GITHUB_SSH_KEY' is empty!
-          Please go to your Semaphore Job Settings -> Secrets/Env Vars
-          and ensure the secret is mapped to this job.
-      when: raw_key_content | length == 0
+        msg: "CRITICAL ERROR: 'GITHUB_SSH_KEY' secret is missing."
+      when: ssh_key_content | length == 0
 
-    - name: "CHECK: Write key and verify formatting"
+    - name: Write Private Key to temp file
       ansible.builtin.copy:
-        content: "{{ raw_key_content | b64decode }}"
+        content: "{{ ssh_key_content }}"
         dest: "{{ key_path }}"
         mode: '0600'
-      no_log: true 
+        owner: "{{ ansible_user_id }}" # Ensure the current user owns it
+      no_log: true
 
-    # --- BACKUP TASKS ---
-    - name: Ensure backup directory exists
+    - name: Ensure local backup directory exists
       ansible.builtin.file:
-        path: "{{ backup_dest }}"
+        path: "{{ local_data_path }}"
+        state: directory
+        mode: '0755'
+        owner: "{{ ansible_user_id }}"
+
+    - name: Ensure mount point directory exists
+      ansible.builtin.file:
+        path: "{{ smb_mount_point }}"
         state: directory
         mode: '0755'
 
+    - name: Install CIFS Utils (Required for mounting SMB)
+      ansible.builtin.apt:
+        name: cifs-utils
+        state: present
+        update_cache: yes
+      ignore_errors: yes 
+
+    # -------------------------------------------------------
+    # 2. GIT MIRRORING
+    # -------------------------------------------------------
     - name: Clone repository (--mirror)
       ansible.builtin.command:
-        # Now uses the full path, so Git won't get confused
-        cmd: "git clone --mirror {{ item.url }} {{ backup_dest }}/{{ item.name }}.git"
+        cmd: "git clone --mirror {{ item.url }} {{ local_data_path }}/{{ item.name }}.git"
       args:
-        creates: "{{ backup_dest }}/{{ item.name }}.git"
+        creates: "{{ local_data_path }}/{{ item.name }}.git"
+      # Run as the regular user to avoid permission issues with SSH key
+      become: yes
+      become_user: "{{ ansible_user_id }}"
       environment:
         GIT_SSH_COMMAND: "ssh -i {{ key_path }} -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
       loop: "{{ repositories }}"
 
     - name: Update repository if it exists
       ansible.builtin.command:
-        # --git-dir requires an absolute path to work correctly here
-        cmd: "git --git-dir={{ backup_dest }}/{{ item.name }}.git remote update"
+        cmd: "git --git-dir={{ local_data_path }}/{{ item.name }}.git remote update"
+      become: yes
+      become_user: "{{ ansible_user_id }}"
       environment:
         GIT_SSH_COMMAND: "ssh -i {{ key_path }} -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
       loop: "{{ repositories }}"
-      # Robust check to see if the directory exists before trying to update
-      when: (backup_dest + '/' + item.name + '.git') is directory
+      when: (local_data_path + '/' + item.name + '.git') is directory
       ignore_errors: yes
 
-    # --- CLEANUP ---
-    - name: Cleanup Private Key
-      ansible.builtin.file:
-        path: "{{ key_path }}"
-        state: absent
+    # -------------------------------------------------------
+    # 3. COMPRESSION
+    # -------------------------------------------------------
+    - name: Compress backup directory
+      community.general.archive:
+        path: "{{ local_data_path }}"
+        dest: "/tmp/{{ backup_filename }}"
+        format: gz
+      # Fallback to shell tar if the community module isn't installed
       ignore_errors: yes
+      register: archive_result
+
+    - name: Compress via Shell (Fallback)
+      ansible.builtin.command:
+        cmd: "tar -czf /tmp/{{ backup_filename }} -C {{ ansible_user_dir }} github-backups"
+      when: archive_result.failed is defined and archive_result.failed
+
+    # -------------------------------------------------------
+    # 4. MOUNT SMB SHARE & COPY
+    # -------------------------------------------------------
+    - name: Mount SMB Share
+      ansible.posix.mount:
+        src: "{{ smb_share_path }}"
+        path: "{{ smb_mount_point }}"
+        opts: "username={{ smb_username }},password={{ share_password }},domain={{ smb_domain }},vers=3.0,iocharset=utf8"
+        fstype: cifs
+        state: mounted
+
+    - name: Copy backup to SMB share
+      ansible.builtin.copy:
+        src: "/tmp/{{ backup_filename }}"
+        dest: "{{ smb_mount_point }}/{{ backup_filename }}"
+        remote_src: yes
+
+    # -------------------------------------------------------
+    # 5. RETENTION POLICY (From your example)
+    # -------------------------------------------------------
+    - name: Find backups older than {{ retention_days }} days
+      ansible.builtin.find:
+        paths: "{{ smb_mount_point }}"
+        patterns: "github_backup_*.tar.gz"
+        age: "{{ retention_days }}d"
+        recurse: no
+      register: old_backups
+
+    - name: Delete old backups
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      with_items: "{{ old_backups.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+
+    # -------------------------------------------------------
+    # 6. CLEANUP
+    # -------------------------------------------------------
+    - name: Unmount SMB Share
+      ansible.posix.mount:
+        path: "{{ smb_mount_point }}"
+        state: unmounted
+
+    - name: Remove temporary files and keys
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ key_path }}"
+        - "/tmp/{{ backup_filename }}"
+        - "{{ local_data_path }}"
+      ignore_errors: yes
+
+    - name: Display success message
+      ansible.builtin.debug:
+        msg: "Backup complete. {{ old_backups.matched }} old backups removed."
