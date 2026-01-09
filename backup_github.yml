@@ -1,0 +1,40 @@
+---
+- name: Backup GitHub Repositories
+  hosts: localhost
+  connection: local
+  gather_facts: yes  # Needed for timestamping if you add archiving later
+  vars:
+    # Where do you want to save the backups?
+    backup_dest: "~/github-backups"
+    
+    # List of repositories to backup (use SSH URLs for easier auth)
+    repositories:
+      - name: "semaphore"
+        url: "git@github.com:kevinreisinger/semaphore.git"
+
+  tasks:
+    - name: Ensure the backup directory exists
+      ansible.builtin.file:
+        path: "{{ backup_dest }}"
+        state: directory
+        mode: '0755'
+
+    - name: Mirror Clone/Update GitHub Repositories
+      ansible.builtin.git:
+        repo: "{{ item.url }}"
+        dest: "{{ backup_dest }}/{{ item.name }}.git"
+        # 'mirror: yes' ensures all branches, tags, and refs are copied
+        mirror: yes
+        # 'bare: yes' creates a storage-optimized folder (no working files)
+        bare: yes
+        # 'update: yes' pulls new changes if the folder already exists
+        update: yes
+      loop: "{{ repositories }}"
+      register: git_result
+
+    - name: Display backup status
+      ansible.builtin.debug:
+        msg: "Repository {{ item.item.name }} updated: {{ item.changed }}"
+      loop: "{{ git_result.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
