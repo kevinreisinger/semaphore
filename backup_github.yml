@@ -10,7 +10,7 @@
     local_data_path: "{{ ansible_user_dir }}/github-backups"
     
     # SMB Share Details (Mapped from Secrets)
-    smb_share_path: "{{ lookup('env', 'SMB_PATH') }}"
+    smb_share_path: "//10.11.202.15/i$/Applications/Semaphore/Backup/Github"
     smb_username: "kevireis"
     smb_domain: "REISINGERS"
     share_password: ""
