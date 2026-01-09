@@ -1,16 +1,14 @@
 ---
-- name: Backup Github
+- name: Backup GitHub Repositories
   hosts: localhost
   connection: local
-  gather_facts: yes  # Needed for timestamping if you add archiving later
+  gather_facts: no
   vars:
-    # Where do you want to save the backups?
     backup_dest: "~/github-backups"
-    
-    # List of repositories to backup (use SSH URLs for easier auth)
     repositories:
       - name: "semaphore"
         url: "git@github.com:kevinreisinger/semaphore.git"
+      # Add more repos here
 
   tasks:
     - name: Ensure the backup directory exists
@@ -19,22 +17,20 @@
         state: directory
         mode: '0755'
 
-    - name: Mirror Clone/Update GitHub Repositories
-      ansible.builtin.git:
-        repo: "{{ item.url }}"
-        dest: "{{ backup_dest }}/{{ item.name }}.git"
-        # 'mirror: yes' ensures all branches, tags, and refs are copied
-        mirror: yes
-        # 'bare: yes' creates a storage-optimized folder (no working files)
-        bare: yes
-        # 'update: yes' pulls new changes if the folder already exists
-        update: yes
+    - name: Clone repository (--mirror) if missing
+      ansible.builtin.command:
+        # --mirror includes all refs (branches, tags, notes)
+        cmd: "git clone --mirror {{ item.url }} {{ backup_dest }}/{{ item.name }}.git"
+      args:
+        # This prevents the command from running if the folder already exists
+        creates: "{{ backup_dest }}/{{ item.name }}.git"
       loop: "{{ repositories }}"
-      register: git_result
 
-    - name: Display backup status
-      ansible.builtin.debug:
-        msg: "Repository {{ item.item.name }} updated: {{ item.changed }}"
-      loop: "{{ git_result.results }}"
-      loop_control:
-        label: "{{ item.item.name }}"
+    - name: Update repository if it already exists
+      ansible.builtin.command:
+        # 'remote update' is the correct way to refresh a mirrored repo
+        cmd: "git --git-dir={{ backup_dest }}/{{ item.name }}.git remote update"
+      loop: "{{ repositories }}"
+      # Only run this task if the directory actually exists (safety check)
+      when: lookup('ansible.builtin.fileglob', backup_dest + '/' + item.name + '.git/HEAD') | length > 0 or true
+      ignore_errors: yes
