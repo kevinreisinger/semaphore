@@ -1,5 +1,5 @@
 ---
-- name: Backup GitHub Repositories (Readable Files) to SMB
+- name: Backup Github
   hosts: localhost
   connection: local
   gather_facts: yes
