@@ -4,6 +4,7 @@
   gather_facts: true
 
   tasks:
+    # 1. Define Directories
     - name: Set target directory for Windows
       set_fact:
         target_dir: "C:\\Temp"
@@ -14,17 +15,30 @@
         target_dir: "/tmp"
       when: ansible_os_family != 'Windows'
 
+    # 2. Ensure Windows Directory Exists
     - name: Ensure directory exists (Windows)
       ansible.windows.win_file:
         path: "{{ target_dir }}"
         state: directory
       when: ansible_os_family == 'Windows'
 
-    - name: Create the test file
+    # 3. Create File on WINDOWS (Standard WinRM)
+    - name: Create the test file (Windows)
+      ansible.windows.win_copy:
+        content: "This file was created by Ansible on {{ inventory_hostname }} (Windows)."
+        dest: "{{ target_dir }}\\ansible_universal_copy.txt"
+      when: ansible_os_family == 'Windows'
+
+    # 4. Create File on LINUX (With Privilege Escalation)
+    - name: Create the test file (Linux)
       ansible.builtin.copy:
-        content: "This file was created by Ansible on {{ inventory_hostname }} running {{ ansible_os_family }}."
+        content: "This file was created by Ansible on {{ inventory_hostname }} (Linux)."
         dest: "{{ target_dir }}/ansible_universal_copy.txt"
+        force: yes
+      become: true  # <--- THIS IS THE FIX (Run as root/sudo)
+      when: ansible_os_family != 'Windows'
     
+    # 5. Verify
     - name: Verify Success
       debug:
-        msg: "Success! File created at {{ target_dir }}/ansible_universal_copy.txt on {{ inventory_hostname }}"
+        msg: "Success! File created at {{ target_dir }} on {{ inventory_hostname }}"
