@@ -6,6 +6,7 @@
     # IMPORTANT: Ensure share_username and share_password are set in Ansible Vault
     # These are left blank here for security, but MUST contain credentials for the share
     skip_servers:
+      - ctrcore2k25.reisingers.com
       - kevireis-home.reisingers.com
       - kevireis-vc2.reisingers.com
     share_unc_path: "\\\\kevireis-home\\i$\\Documents\\Kevin\\Network Documentation\\Server Updates"
