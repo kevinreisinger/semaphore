@@ -1,5 +1,5 @@
 ---
-- name: Upate Windows Servers
+- name: Upate Windows Servers and add more skip servers
   hosts: windows
   gather_facts: yes
   vars:
