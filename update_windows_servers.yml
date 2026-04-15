@@ -28,30 +28,27 @@
         msg: "Skipping patching for host {{ inventory_hostname }}"
       when: inventory_hostname in skip_servers
 
-    # --- FIX 1: Stop ALL related update services to release file locks ---
-    - name: Stop Windows Update and related services
-      win_service:
-        name: "{{ item }}"
-        state: stopped
-        force_dependent_services: yes
-      loop:
-        - wuauserv
-        - bits
-        - cryptsvc
-        - dosvc
-      ignore_errors: yes
+    # --- FIX 1: Use win_shell for services to prevent Ansible module crashes ---
+    - name: Force stop update services
+      win_shell: |
+        $services = "wuauserv", "bits", "cryptsvc", "dosvc"
+        foreach ($service in $services) {
+            Stop-Service -Name $service -Force -ErrorAction SilentlyContinue
+        }
+        # Always exit cleanly
+        exit 0
       when: inventory_hostname not in skip_servers
 
-    # We use win_shell here as an alternative to win_file for force removal.
-    # win_file state: absent can sometimes get stuck on long paths or ghost files.
+    # --- FIX 2: Force exit code 0 so locked files don't fail the host ---
     - name: Forcefully remove SoftwareDistribution folder
       win_shell: |
         if (Test-Path "C:\Windows\SoftwareDistribution") {
             Remove-Item -Path "C:\Windows\SoftwareDistribution" -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
         }
+        # Even if a file is permanently locked, return success so Ansible continues
+        exit 0
       when: inventory_hostname not in skip_servers
 
-    # --- FIX 2: Start the services back up ---
     - name: Start Windows Update and related services
       win_service:
         name: "{{ item }}"
@@ -72,7 +69,6 @@
         reboot: no
         reboot_timeout: 900
       register: update_result
-      # --- FIX 3: Prevent host from dropping out so retry logic can run ---
       failed_when: false 
       when: inventory_hostname not in skip_servers
 
@@ -106,7 +102,6 @@
       when: inventory_hostname not in skip_servers
 
 
-    # --- LOGGING TASK MODIFIED FOR ROBUST SHARE ACCESS ---
     - name: Generate detailed summary log and copy to UNC share
       win_shell: |
         $HostName = "{{ inventory_hostname }}"
@@ -121,8 +116,6 @@
         $LocalDatePath = Join-Path $LocalTemp $DateFolder
         if (!(Test-Path $LocalDatePath)) { New-Item -ItemType Directory -Path $LocalDatePath -Force | Out-Null }
 
-        # FIX: Removed the replace filters to prevent Ansible parser errors from backslashes.
-        # PowerShell's ConvertFrom-Json can typically handle newlines in the input string.
         $UpdateData = '{{ final_updates | to_json }}' | ConvertFrom-Json
         $RebootRequired = "{{ final_reboot_required }}"
         $SummaryFile = Join-Path $LocalDatePath "$HostName`_$Timestamp.txt"
@@ -157,22 +150,16 @@
         # --- 2. Copy to UNC Share (requires credentials/access) ---
         if ($ShareUser -ne "" -and $SharePass -ne "") {
           try {
-            # Use net use to map the share temporarily with explicit credentials
             $SecPass = ConvertTo-SecureString $SharePass -AsPlainText -Force
             $Cred = New-Object System.Management.Automation.PSCredential($ShareUser, $SecPass)
             
-            # --- MODIFIED LOGIC: Find the root share by splitting the path ---
-            # Splits the path into parts, takes the first three (server, share name)
-            # and joins them back.
             $ShareParts = $ShareUNC.Split('\') | Where-Object { $_ }
             $ShareRoot = "\\$($ShareParts[0])\$($ShareParts[1])"
 
-            # Use net use with the determined ShareRoot
             net use $ShareRoot $SharePass /user:$ShareUser /persistent:no | Out-Null
             
             $SharePath = Join-Path $ShareUNC $DateFolder
             
-            # Create remote date folder
             if (!(Test-Path $SharePath)) { New-Item -ItemType Directory -Path $SharePath -Force | Out-Null }
             
             Copy-Item $SummaryFile -Destination $SharePath -Force
