@@ -28,54 +28,62 @@
         msg: "Skipping patching for host {{ inventory_hostname }}"
       when: inventory_hostname in skip_servers
 
-    # --- FIX 1: Clear Cached Update Metadata ---
-    - name: Stop Windows Update Service
+    # --- FIX 1: Stop ALL related update services to release file locks ---
+    - name: Stop Windows Update and related services
       win_service:
-        name: wuauserv
+        name: "{{ item }}"
         state: stopped
-        start_mode: auto
-      # We always run this to ensure a clean slate before searching for updates
+        force_dependent_services: yes
+      loop:
+        - wuauserv
+        - bits
+        - cryptsvc
+        - dosvc
+      ignore_errors: yes
       when: inventory_hostname not in skip_servers
-      
-    - name: Delete SoftwareDistribution folder (clears cached metadata)
-      win_file:
-        path: C:\Windows\SoftwareDistribution
-        state: absent
-      ignore_errors: yes # Added to prevent failure if the folder doesn't exist for some reason
+
+    # We use win_shell here as an alternative to win_file for force removal.
+    # win_file state: absent can sometimes get stuck on long paths or ghost files.
+    - name: Forcefully remove SoftwareDistribution folder
+      win_shell: |
+        if (Test-Path "C:\Windows\SoftwareDistribution") {
+            Remove-Item -Path "C:\Windows\SoftwareDistribution" -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
+        }
       when: inventory_hostname not in skip_servers
-      
-    - name: Start Windows Update Service
+
+    # --- FIX 2: Start the services back up ---
+    - name: Start Windows Update and related services
       win_service:
-        name: wuauserv
+        name: "{{ item }}"
         state: started
+      loop:
+        - cryptsvc
+        - bits
+        - wuauserv
+      ignore_errors: yes
       when: inventory_hostname not in skip_servers
 
 
     - name: Install Windows updates (initial attempt)
       win_updates:
-        # --- FIX 2: Use "critical" and "security" only initially for stability ---
         category_names:
           - CriticalUpdates
           - SecurityUpdates
-          # Removed the wide range of categories like Feature Packs, Drivers, etc.
-          # These often require specific sequencing and can cause failures.
         reboot: no
-        # --- FIX 3: Force the update search to ensure fresh data is used ---
-        # The reboot_timeout forces the task to wait long enough for the search
-        # and installation to complete, even if no reboot is requested.
-        reboot_timeout: 900 
+        reboot_timeout: 900
       register: update_result
+      # --- FIX 3: Prevent host from dropping out so retry logic can run ---
+      failed_when: false 
       when: inventory_hostname not in skip_servers
 
 
-    # The comment causing the error has been removed from the 'when' block.
     - name: Retry failed updates (if any)
       win_updates:
         category_names:
           - CriticalUpdates
           - SecurityUpdates
         reboot: no
-        reboot_timeout: 900 # Use timeout here as well
+        reboot_timeout: 900
       register: retry_result
       when: >
         inventory_hostname not in skip_servers and
