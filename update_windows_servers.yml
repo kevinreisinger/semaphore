@@ -30,7 +30,7 @@
 
     - name: Force stop update services
       win_shell:
-        cmd: |
+        _raw_params: |
           $services = "wuauserv", "bits", "cryptsvc", "dosvc"
           foreach ($service in $services) {
               Stop-Service -Name $service -Force -ErrorAction SilentlyContinue
@@ -40,7 +40,7 @@
 
     - name: Forcefully remove SoftwareDistribution folder
       win_shell:
-        cmd: |
+        _raw_params: |
           if (Test-Path "C:\Windows\SoftwareDistribution") {
               Remove-Item -Path "C:\Windows\SoftwareDistribution" -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
           }
@@ -102,8 +102,7 @@
 
     - name: Generate detailed summary log and copy to UNC share
       win_shell:
-        executable: powershell
-        cmd: |
+        _raw_params: |
           $HostName = "{{ inventory_hostname }}"
           $Timestamp = Get-Date -Format "yyyy-MM-dd_HHmmss"
           $DateFolder = Get-Date -Format "yyyy-MM-dd"
@@ -176,6 +175,8 @@
           } else {
             Write-Host "⚠️ Skipping share copy: No credentials provided."
           }
+      args:
+        executable: powershell
       when: inventory_hostname not in skip_servers and final_updates is defined
 
     - name: Reboot if required
