@@ -1,0 +1,186 @@
+---
+- name: Update Windows Servers
+  hosts: windows
+  gather_facts: yes
+  vars:
+    # IMPORTANT: Ensure share_username and share_password are set in Ansible Vault
+    skip_servers:
+      - caidreis-pc.reisingers.com
+      - ctrcore2k25.reisingers.com
+      - kevireis-home.reisingers.com
+      - kevireis-vc2.reisingers.com
+      - kevireis-delllt.reisingers.com
+      - server2k19.reisingers.com
+    share_unc_path: "\\kevireis-home\\i$\\Documents\\Kevin\\Network Documentation\\Server Updates"
+    share_username: ""
+    share_password: ""
+    cleanup_days: 30
+    
+    # Set to true only if you need to nuke the update cache to fix a broken server
+    force_cache_reset: false 
+
+  tasks:
+    - name: Ensure C:\Temp exists
+      win_file:
+        path: C:\Temp
+        state: directory
+
+    - name: Notify skipped servers
+      debug:
+        msg: "Skipping patching for host {{ inventory_hostname }}"
+      when: inventory_hostname in skip_servers
+
+    # Grouping all patching tasks into a block to avoid repeating the 'when' clause
+    - name: Patching Block
+      when: inventory_hostname not in skip_servers
+      block:
+        
+        - name: Remediation - Force stop update services and clear cache
+          when: force_cache_reset | bool
+          block:
+            - name: Stop update services
+              win_service:
+                name: "{{ item }}"
+                state: stopped
+                force: yes
+              loop:
+                - wuauserv
+                - bits
+                - cryptsvc
+                - dosvc
+              ignore_errors: yes
+
+            - name: Forcefully remove SoftwareDistribution folder
+              win_file:
+                path: C:\Windows\SoftwareDistribution
+                state: absent
+
+            - name: Start Windows Update and related services
+              win_service:
+                name: "{{ item }}"
+                state: started
+              loop:
+                - cryptsvc
+                - bits
+                - wuauserv
+              ignore_errors: yes
+
+        - name: Install Windows updates (initial attempt)
+          win_updates:
+            category_names:
+              - CriticalUpdates
+              - SecurityUpdates
+            reboot: no
+            reboot_timeout: 900
+          register: update_result
+          failed_when: false 
+
+        - name: Retry failed updates (if any)
+          win_updates:
+            category_names:
+              - CriticalUpdates
+              - SecurityUpdates
+            reboot: no
+            reboot_timeout: 900
+          register: retry_result
+          when: >
+            update_result.updates is defined and
+            (update_result.updates | dict2items | selectattr('value.installed', 'equalto', false) | list | length > 0)
+
+        - name: Combine update results (merge retry with original)
+          set_fact:
+            final_updates: >-
+              {{
+                (update_result.updates | default({})) |
+                combine(retry_result.updates | default({}), recursive=True)
+              }}
+            final_reboot_required: >-
+              {{
+                (update_result.reboot_required | default(false)) or
+                (retry_result.reboot_required | default(false))
+              }}
+
+        - name: Generate detailed summary log and copy to UNC share
+          win_shell: |
+            $HostName = "{{ inventory_hostname }}"
+            $Timestamp = Get-Date -Format "yyyy-MM-dd_HHmmss"
+            $DateFolder = Get-Date -Format "yyyy-MM-dd"
+            $LocalTemp = "C:\Temp"
+            $ShareUNC = "{{ share_unc_path }}"
+            $ShareUser = "{{ share_username }}"
+            $SharePass = "{{ share_password }}"
+
+            # --- 1. Create Local File ---
+            $LocalDatePath = Join-Path $LocalTemp $DateFolder
+            if (!(Test-Path $LocalDatePath)) { New-Item -ItemType Directory -Path $LocalDatePath -Force | Out-Null }
+
+            $B64 = "{{ final_updates | to_json | b64encode }}"
+            $JsonString = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($B64))
+            $UpdateData = $JsonString | ConvertFrom-Json
+            
+            $RebootRequired = "{{ final_reboot_required }}"
+            $SummaryFile = Join-Path $LocalDatePath "$HostName`_$Timestamp.txt"
+
+            $Summary = @()
+            $Summary += "Windows Update Summary for $HostName"
+            $Summary += "--------------------------------------------------------"
+            $Summary += "Run Date/Time: $(Get-Date)"
+            $Summary += "Reboot required: $RebootRequired"
+            $Summary += ""
+            
+            $Installed = $UpdateData.GetEnumerator() | Where-Object { $_.Value.installed -eq $true }
+            $Summary += "INSTALLED UPDATES ($($Installed.Count) Total):"
+            if ($Installed) {
+              foreach ($u in $Installed) { $Summary += " - $($u.Value.title)" }
+            } else {
+              $Summary += " - None installed in this session."
+            }
+
+            $Summary += ""
+            $Failed = $UpdateData.GetEnumerator() | Where-Object { $_.Value.installed -eq $false }
+            $Summary += "FAILED/PENDING UPDATES ($($Failed.Count) Total):"
+            if ($Failed) {
+              foreach ($f in $Failed) { $Summary += " - $($f.Value.title)" }
+            } else {
+              $Summary += " - None failed/pending."
+            }
+            
+            $Summary | Out-File -FilePath $SummaryFile -Encoding UTF8
+            Write-Host "✅ Local Summary written to: $SummaryFile"
+
+            # --- 2. Copy to UNC Share ---
+            if ($ShareUser -ne "" -and $SharePass -ne "") {
+              try {
+                $SecPass = ConvertTo-SecureString $SharePass -AsPlainText -Force
+                $Cred = New-Object System.Management.Automation.PSCredential($ShareUser, $SecPass)
+                
+                # Using New-SmbMapping instead of net use for better reliability in PowerShell
+                $ShareParts = $ShareUNC.Split('\') | Where-Object { $_ }
+                $ShareRoot = "\\$($ShareParts[0])\$($ShareParts[1])"
+
+                New-SmbMapping -LocalPath "Z:" -RemotePath $ShareRoot -UserName $ShareUser -Password $SharePass -ErrorAction Stop | Out-Null
+                
+                $SharePath = Join-Path $ShareUNC $DateFolder
+                if (!(Test-Path $SharePath)) { New-Item -ItemType Directory -Path $SharePath -Force | Out-Null }
+                
+                Copy-Item $SummaryFile -Destination $SharePath -Force
+                
+                Remove-SmbMapping -LocalPath "Z:" -Force -UpdateProfile -ErrorAction SilentlyContinue | Out-Null
+                Write-Host "✅ Summary copied to share: $SharePath"
+
+              } catch {
+                Write-Host "⚠️ Could not copy summary to share: $($_.Exception.Message)"
+                # Ensure mapping is removed even if copy fails
+                Remove-SmbMapping -LocalPath "Z:" -Force -UpdateProfile -ErrorAction SilentlyContinue | Out-Null
+              }
+            } else {
+              Write-Host "⚠️ Skipping share copy: No credentials provided."
+            }
+          args:
+            executable: powershell
+          when: final_updates is defined
+
+        - name: Reboot if required
+          win_reboot:
+            reboot_timeout: 3600
+          when: final_reboot_required | bool
