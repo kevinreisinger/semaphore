@@ -1,0 +1,65 @@
+---
+- name: Update Debian-based Linux Servers
+  hosts: linux
+  become: yes
+  gather_facts: yes
+
+  vars:
+    email_to: "kevinreisinger@gmail.com"
+
+  tasks:
+    - name: Ensure playbook only runs on Debian/Ubuntu
+      ansible.builtin.assert:
+        that: ansible_os_family == "Debian"
+        fail_msg: "This playbook uses apt and is strictly for Debian-based OS families."
+
+    - name: Force APT to always include phased updates
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/99-phased-updates
+        content: |
+          APT::Get::Always-Include-Phased-Updates "true";
+        mode: '0644'
+
+    - name: Update apt cache, perform dist-upgrade, and clean up
+      ansible.builtin.apt:
+        update_cache: yes
+        upgrade: dist
+        autoremove: yes
+        autoclean: yes
+      register: apt_update
+
+    - name: Check if reboot is required
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required
+
+    - name: Share reboot list across hosts
+      ansible.builtin.set_fact:
+        global_reboot_required_hosts: >-
+          {{
+            ansible_play_hosts_all 
+            | map('extract', hostvars) 
+            | selectattr('reboot_required.stat.exists', 'defined') 
+            | selectattr('reboot_required.stat.exists') 
+            | map(attribute='inventory_hostname') 
+            | list
+          }}
+      run_once: true
+
+    - name: Send email if any hosts require reboot
+      community.general.mail:
+        host: localhost
+        port: 25
+        subject: "⚠️ Linux Servers Reboot Required"
+        to: "{{ email_to }}"
+        body: |
+          The following servers require a reboot after updates:
+
+          {% for host in global_reboot_required_hosts %}
+           - {{ host }}
+          {% endfor %}
+
+          Triggered on {{ ansible_date_time.date }}
+      delegate_to: localhost
+      run_once: true
+      when: global_reboot_required_hosts | length > 0
