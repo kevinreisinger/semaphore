@@ -101,81 +101,82 @@
               }}
 
         - name: Generate detailed summary log and copy to UNC share
-          win_shell: |
-            $HostName = "{{ inventory_hostname }}"
-            $Timestamp = Get-Date -Format "yyyy-MM-dd_HHmmss"
-            $DateFolder = Get-Date -Format "yyyy-MM-dd"
-            $LocalTemp = "C:\Temp"
-            $ShareUNC = "{{ share_unc_path }}"
-            $ShareUser = "{{ share_username }}"
-            $SharePass = "{{ share_password }}"
+          win_shell:
+            _raw_params: |
+              $HostName = "{{ inventory_hostname }}"
+              $Timestamp = Get-Date -Format "yyyy-MM-dd_HHmmss"
+              $DateFolder = Get-Date -Format "yyyy-MM-dd"
+              $LocalTemp = "C:\Temp"
+              $ShareUNC = "{{ share_unc_path }}"
+              $ShareUser = "{{ share_username }}"
+              $SharePass = "{{ share_password }}"
 
-            # --- 1. Create Local File ---
-            $LocalDatePath = Join-Path $LocalTemp $DateFolder
-            if (!(Test-Path $LocalDatePath)) { New-Item -ItemType Directory -Path $LocalDatePath -Force | Out-Null }
+              # --- 1. Create Local File ---
+              $LocalDatePath = Join-Path $LocalTemp $DateFolder
+              if (!(Test-Path $LocalDatePath)) { New-Item -ItemType Directory -Path $LocalDatePath -Force | Out-Null }
 
-            $B64 = "{{ final_updates | to_json | b64encode }}"
-            $JsonString = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($B64))
-            $UpdateData = $JsonString | ConvertFrom-Json
-            
-            $RebootRequired = "{{ final_reboot_required }}"
-            $SummaryFile = Join-Path $LocalDatePath "$HostName`_$Timestamp.txt"
+              $B64 = "{{ final_updates | to_json | b64encode }}"
+              $JsonString = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($B64))
+              $UpdateData = $JsonString | ConvertFrom-Json
+              
+              $RebootRequired = "{{ final_reboot_required }}"
+              $SummaryFile = Join-Path $LocalDatePath "$HostName`_$Timestamp.txt"
 
-            $Summary = @()
-            $Summary += "Windows Update Summary for $HostName"
-            $Summary += "--------------------------------------------------------"
-            $Summary += "Run Date/Time: $(Get-Date)"
-            $Summary += "Reboot required: $RebootRequired"
-            $Summary += ""
-            
-            $Installed = $UpdateData.GetEnumerator() | Where-Object { $_.Value.installed -eq $true }
-            $Summary += "INSTALLED UPDATES ($($Installed.Count) Total):"
-            if ($Installed) {
-              foreach ($u in $Installed) { $Summary += " - $($u.Value.title)" }
-            } else {
-              $Summary += " - None installed in this session."
-            }
-
-            $Summary += ""
-            $Failed = $UpdateData.GetEnumerator() | Where-Object { $_.Value.installed -eq $false }
-            $Summary += "FAILED/PENDING UPDATES ($($Failed.Count) Total):"
-            if ($Failed) {
-              foreach ($f in $Failed) { $Summary += " - $($f.Value.title)" }
-            } else {
-              $Summary += " - None failed/pending."
-            }
-            
-            $Summary | Out-File -FilePath $SummaryFile -Encoding UTF8
-            Write-Host "✅ Local Summary written to: $SummaryFile"
-
-            # --- 2. Copy to UNC Share ---
-            if ($ShareUser -ne "" -and $SharePass -ne "") {
-              try {
-                $SecPass = ConvertTo-SecureString $SharePass -AsPlainText -Force
-                $Cred = New-Object System.Management.Automation.PSCredential($ShareUser, $SecPass)
-                
-                # Using New-SmbMapping instead of net use for better reliability in PowerShell
-                $ShareParts = $ShareUNC.Split('\') | Where-Object { $_ }
-                $ShareRoot = "\\$($ShareParts[0])\$($ShareParts[1])"
-
-                New-SmbMapping -LocalPath "Z:" -RemotePath $ShareRoot -UserName $ShareUser -Password $SharePass -ErrorAction Stop | Out-Null
-                
-                $SharePath = Join-Path $ShareUNC $DateFolder
-                if (!(Test-Path $SharePath)) { New-Item -ItemType Directory -Path $SharePath -Force | Out-Null }
-                
-                Copy-Item $SummaryFile -Destination $SharePath -Force
-                
-                Remove-SmbMapping -LocalPath "Z:" -Force -UpdateProfile -ErrorAction SilentlyContinue | Out-Null
-                Write-Host "✅ Summary copied to share: $SharePath"
-
-              } catch {
-                Write-Host "⚠️ Could not copy summary to share: $($_.Exception.Message)"
-                # Ensure mapping is removed even if copy fails
-                Remove-SmbMapping -LocalPath "Z:" -Force -UpdateProfile -ErrorAction SilentlyContinue | Out-Null
+              $Summary = @()
+              $Summary += "Windows Update Summary for $HostName"
+              $Summary += "--------------------------------------------------------"
+              $Summary += "Run Date/Time: $(Get-Date)"
+              $Summary += "Reboot required: $RebootRequired"
+              $Summary += ""
+              
+              $Installed = $UpdateData.GetEnumerator() | Where-Object { $_.Value.installed -eq $true }
+              $Summary += "INSTALLED UPDATES ($($Installed.Count) Total):"
+              if ($Installed) {
+                foreach ($u in $Installed) { $Summary += " - $($u.Value.title)" }
+              } else {
+                $Summary += " - None installed in this session."
               }
-            } else {
-              Write-Host "⚠️ Skipping share copy: No credentials provided."
-            }
+
+              $Summary += ""
+              $Failed = $UpdateData.GetEnumerator() | Where-Object { $_.Value.installed -eq $false }
+              $Summary += "FAILED/PENDING UPDATES ($($Failed.Count) Total):"
+              if ($Failed) {
+                foreach ($f in $Failed) { $Summary += " - $($f.Value.title)" }
+              } else {
+                $Summary += " - None failed/pending."
+              }
+              
+              $Summary | Out-File -FilePath $SummaryFile -Encoding UTF8
+              Write-Host "✅ Local Summary written to: $SummaryFile"
+
+              # --- 2. Copy to UNC Share ---
+              if ($ShareUser -ne "" -and $SharePass -ne "") {
+                try {
+                  $SecPass = ConvertTo-SecureString $SharePass -AsPlainText -Force
+                  $Cred = New-Object System.Management.Automation.PSCredential($ShareUser, $SecPass)
+                  
+                  # Using New-SmbMapping instead of net use for better reliability in PowerShell
+                  $ShareParts = $ShareUNC.Split('\') | Where-Object { $_ }
+                  $ShareRoot = "\\$($ShareParts[0])\$($ShareParts[1])"
+
+                  New-SmbMapping -LocalPath "Z:" -RemotePath $ShareRoot -UserName $ShareUser -Password $SharePass -ErrorAction Stop | Out-Null
+                  
+                  $SharePath = Join-Path $ShareUNC $DateFolder
+                  if (!(Test-Path $SharePath)) { New-Item -ItemType Directory -Path $SharePath -Force | Out-Null }
+                  
+                  Copy-Item $SummaryFile -Destination $SharePath -Force
+                  
+                  Remove-SmbMapping -LocalPath "Z:" -Force -UpdateProfile -ErrorAction SilentlyContinue | Out-Null
+                  Write-Host "✅ Summary copied to share: $SharePath"
+
+                } catch {
+                  Write-Host "⚠️ Could not copy summary to share: $($_.Exception.Message)"
+                  # Ensure mapping is removed even if copy fails
+                  Remove-SmbMapping -LocalPath "Z:" -Force -UpdateProfile -ErrorAction SilentlyContinue | Out-Null
+                }
+              } else {
+                Write-Host "⚠️ Skipping share copy: No credentials provided."
+              }
           args:
             executable: powershell
           when: final_updates is defined
