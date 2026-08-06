@@ -1,5 +1,5 @@
 ---
-- name: Update Windows Servers
+- name: Update Windows Servers (GUI Clearing Edition)
   hosts: windows
   gather_facts: yes
   vars:
@@ -16,7 +16,7 @@
     share_password: ""
     cleanup_days: 30
     
-    # Set to true only if you need to nuke the update cache to fix a broken server
+    # Set to true only if you need to nuke the update cache to fix a severely broken server
     force_cache_reset: false 
 
   tasks:
@@ -30,11 +30,25 @@
         msg: "Skipping patching for host {{ inventory_hostname }}"
       when: inventory_hostname in skip_servers
 
-    # Grouping all patching tasks into a block to avoid repeating the 'when' clause
     - name: Patching Block
       when: inventory_hostname not in skip_servers
       block:
         
+        # --- GUI LOCK BREAKING & DEFENDER NATIVE UPDATE ---
+        - name: Break GUI Update Locks (Restart USO and WUA)
+          win_service:
+            name: "{{ item }}"
+            state: restarted
+          loop:
+            - wuauserv
+            - usosvc
+          ignore_errors: yes
+
+        - name: Force Windows Defender signatures natively
+          win_shell: Update-MpSignature
+          ignore_errors: yes
+
+        # --- OPTIONAL CACHE NUKE ---
         - name: Remediation - Force stop update services and clear cache
           when: force_cache_reset | bool
           block:
@@ -48,6 +62,7 @@
                 - bits
                 - cryptsvc
                 - dosvc
+                - usosvc
               ignore_errors: yes
 
             - name: Forcefully remove SoftwareDistribution folder
@@ -63,8 +78,10 @@
                 - cryptsvc
                 - bits
                 - wuauserv
+                - usosvc
               ignore_errors: yes
 
+        # --- CORE ANSIBLE UPDATE TASKS ---
         - name: Install Windows updates (initial attempt)
           win_updates:
             category_names:
@@ -73,7 +90,7 @@
               - UpdateRollups
               - Updates
               - DefinitionUpdates
-              # - Drivers
+            server_selection: windows_update 
             reboot: no
             reboot_timeout: 900
           register: update_result
@@ -87,7 +104,7 @@
               - UpdateRollups
               - Updates
               - DefinitionUpdates
-              # - Drivers
+            server_selection: windows_update 
             reboot: no
             reboot_timeout: 900
           register: retry_result
@@ -108,6 +125,7 @@
                 (retry_result.reboot_required | default(false))
               }}
 
+        # --- LOGGING ---
         - name: Generate detailed summary log and copy to UNC share
           win_shell:
             _raw_params: |
@@ -119,7 +137,6 @@
               $ShareUser = "{{ share_username }}"
               $SharePass = "{{ share_password }}"
 
-              # --- 1. Create Local File ---
               $LocalDatePath = Join-Path $LocalTemp $DateFolder
               if (!(Test-Path $LocalDatePath)) { New-Item -ItemType Directory -Path $LocalDatePath -Force | Out-Null }
 
@@ -157,13 +174,11 @@
               $Summary | Out-File -FilePath $SummaryFile -Encoding UTF8
               Write-Host "✅ Local Summary written to: $SummaryFile"
 
-              # --- 2. Copy to UNC Share ---
               if ($ShareUser -ne "" -and $SharePass -ne "") {
                 try {
                   $SecPass = ConvertTo-SecureString $SharePass -AsPlainText -Force
                   $Cred = New-Object System.Management.Automation.PSCredential($ShareUser, $SecPass)
                   
-                  # Using New-SmbMapping instead of net use for better reliability in PowerShell
                   $ShareParts = $ShareUNC.Split('\') | Where-Object { $_ }
                   $ShareRoot = "\\$($ShareParts[0])\$($ShareParts[1])"
 
@@ -179,7 +194,6 @@
 
                 } catch {
                   Write-Host "⚠️ Could not copy summary to share: $($_.Exception.Message)"
-                  # Ensure mapping is removed even if copy fails
                   Remove-SmbMapping -LocalPath "Z:" -Force -UpdateProfile -ErrorAction SilentlyContinue | Out-Null
                 }
               } else {
@@ -189,6 +203,12 @@
             executable: powershell
           when: final_updates is defined
 
+        # --- GUI CACHE REFRESH ---
+        - name: Force GUI (Update Orchestrator) to refresh its state
+          win_shell: UsoClient.exe StartScan
+          ignore_errors: yes
+
+        # --- REBOOT ---
         - name: Reboot if required
           win_reboot:
             reboot_timeout: 3600
