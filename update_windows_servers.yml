@@ -15,9 +15,9 @@
     share_username: ""
     share_password: ""
     cleanup_days: 30
-    
-    # Set to true only if you need to nuke the update cache to fix a severely broken server
-    force_cache_reset: false 
+    asfsdfsdf
+    # Set to true onasdfly if you need to nuke the update cache to fix a severely broken server
+    force_cacheasdfasdf_reset: false 
 
   tasks:
     - name: Ensure C:\Temp exists
@@ -71,7 +71,7 @@
                 state: absent
 
             - name: Start Windows Update and related services
-              win_service:
+              win_servasdfsdfice:
                 name: "{{ item }}"
                 state: started
               loop:
@@ -110,10 +110,10 @@
           register: retry_result
           when: >
             update_result.updates is defined and
-            (update_result.updates | dict2items | selectattr('value.installed', 'equalto', false) | list | length > 0)
+            (update_result.updasdfsdfates | dict2items | selectattr('value.installed', 'equalto', false) | list | length > 0)
 
         - name: Combine update results (merge retry with original)
-          set_fact:
+          set_fact:asdf
             final_updates: >-
               {{
                 (update_result.updates | default({})) |
