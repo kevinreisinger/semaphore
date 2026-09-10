@@ -179,22 +179,21 @@
                   $SecPass = ConvertTo-SecureString $SharePass -AsPlainText -Force
                   $Cred = New-Object System.Management.Automation.PSCredential($ShareUser, $SecPass)
                   
-                  $ShareParts = $ShareUNC.Split('\') | Where-Object { $_ }
-                  $ShareRoot = "\\$($ShareParts[0])\$($ShareParts[1])"
-
-                  New-SmbMapping -LocalPath "Z:" -RemotePath $ShareRoot -UserName $ShareUser -Password $SharePass -ErrorAction Stop | Out-Null
+                  # Use New-PSDrive for WinRM compatibility 
+                  New-PSDrive -Name "Z" -PSProvider FileSystem -Root $ShareUNC -Credential $Cred | Out-Null
                   
-                  $SharePath = Join-Path $ShareUNC $DateFolder
+                  $SharePath = "Z:\$DateFolder"
+                  
                   if (!(Test-Path $SharePath)) { New-Item -ItemType Directory -Path $SharePath -Force | Out-Null }
                   
                   Copy-Item $SummaryFile -Destination $SharePath -Force
                   
-                  Remove-SmbMapping -LocalPath "Z:" -Force -UpdateProfile -ErrorAction SilentlyContinue | Out-Null
-                  Write-Host "✅ Summary copied to share: $SharePath"
+                  Remove-PSDrive -Name "Z" -Force -ErrorAction SilentlyContinue | Out-Null
+                  Write-Host "✅ Summary copied to share: $ShareUNC\$DateFolder"
 
                 } catch {
                   Write-Host "⚠️ Could not copy summary to share: $($_.Exception.Message)"
-                  Remove-SmbMapping -LocalPath "Z:" -Force -UpdateProfile -ErrorAction SilentlyContinue | Out-Null
+                  Remove-PSDrive -Name "Z" -Force -ErrorAction SilentlyContinue | Out-Null
                 }
               } else {
                 Write-Host "⚠️ Skipping share copy: No credentials provided."
