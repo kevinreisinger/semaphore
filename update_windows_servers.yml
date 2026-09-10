@@ -14,8 +14,8 @@
       
     # Fixed UNC path with 4 backslashes for correct YAML parsing
     share_unc_path: "\\\\kevireis-home\\i$\\Documents\\Kevin\\Network Documentation\\Server Updates"
-    share_username: "YOUR_USERNAME_HERE"
-    share_password: "YOUR_PASSWORD_HERE"
+    share_username: ""
+    share_password: ""
     cleanup_days: 30
     
     # Set to true only if you need to nuke the update cache to fix a severely broken server
