@@ -14,8 +14,8 @@
       
     # Fixed UNC path with 4 backslashes for correct YAML parsing
     share_unc_path: "\\\\kevireis-home\\i$\\Documents\\Kevin\\Network Documentation\\Server Updates"
-    share_username: ""
-    share_password: ""
+    share_username: "YOUR_USERNAME_HERE"
+    share_password: "YOUR_PASSWORD_HERE"
     cleanup_days: 30
     
     # Set to true only if you need to nuke the update cache to fix a severely broken server
@@ -156,7 +156,8 @@
               $Summary += "Reboot required: $RebootRequired"
               $Summary += ""
               
-              $Installed = $UpdateData.GetEnumerator() | Where-Object { $_.Value.installed -eq $true }
+              # FIX: Use psobject.properties instead of GetEnumerator() for PSCustomObject
+              $Installed = $UpdateData.psobject.properties | Where-Object { $_.Value.installed -eq $true }
               $Summary += "INSTALLED UPDATES ($($Installed.Count) Total):"
               if ($Installed) {
                 foreach ($u in $Installed) { $Summary += " - $($u.Value.title)" }
@@ -165,7 +166,7 @@
               }
 
               $Summary += ""
-              $Failed = $UpdateData.GetEnumerator() | Where-Object { $_.Value.installed -eq $false }
+              $Failed = $UpdateData.psobject.properties | Where-Object { $_.Value.installed -eq $false }
               $Summary += "FAILED/PENDING UPDATES ($($Failed.Count) Total):"
               if ($Failed) {
                 foreach ($f in $Failed) { $Summary += " - $($f.Value.title)" }
@@ -176,11 +177,9 @@
               $Summary | Out-File -FilePath $SummaryFile -Encoding UTF8
 
               if ($ShareUser -ne "" -and $SharePass -ne "" -and $ShareUser -ne "YOUR_USERNAME_HERE") {
-                # Extract root of the share (e.g. \\kevireis-home\i$)
                 $ShareParts = $ShareUNC.Split('\') | Where-Object { $_ }
                 $ShareRoot = "\\$($ShareParts[0])\$($ShareParts[1])"
                 
-                # Use native OS authentication
                 $netUseOutput = & net.exe use $ShareRoot $SharePass /user:$ShareUser 2>&1
                 if ($LASTEXITCODE -ne 0) {
                     Throw "Failed to map network drive. Output: $netUseOutput"
