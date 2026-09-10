@@ -91,8 +91,8 @@
               - Updates
               - DefinitionUpdates
             server_selection: windows_update 
-            reboot: no
-            reboot_timeout: 900
+            reboot: yes
+            reboot_timeout: 3600
           register: update_result
           failed_when: false 
 
@@ -105,8 +105,8 @@
               - Updates
               - DefinitionUpdates
             server_selection: windows_update 
-            reboot: no
-            reboot_timeout: 900
+            reboot: yes
+            reboot_timeout: 3600
           register: retry_result
           when: >
             update_result.updates is defined and
@@ -207,9 +207,3 @@
         - name: Force GUI (Update Orchestrator) to refresh its state
           win_shell: UsoClient.exe StartScan
           ignore_errors: yes
-
-        # --- REBOOT ---
-        - name: Reboot if required
-          win_reboot:
-            reboot_timeout: 3600
-          when: final_reboot_required | bool
