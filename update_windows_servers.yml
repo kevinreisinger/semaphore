@@ -172,35 +172,41 @@
               }
               
               $Summary | Out-File -FilePath $SummaryFile -Encoding UTF8
-              Write-Host "✅ Local Summary written to: $SummaryFile"
 
               if ($ShareUser -ne "" -and $SharePass -ne "") {
+                # Extract root of the share (e.g. \\kevireis-home\i$)
+                $ShareParts = $ShareUNC.Split('\') | Where-Object { $_ }
+                $ShareRoot = "\\$($ShareParts[0])\$($ShareParts[1])"
+                
+                # Use native OS authentication
+                $netUseOutput = & net.exe use $ShareRoot $SharePass /user:$ShareUser 2>&1
+                if ($LASTEXITCODE -ne 0) {
+                    Throw "Failed to map network drive. Output: $netUseOutput"
+                }
+                
                 try {
-                  $SecPass = ConvertTo-SecureString $SharePass -AsPlainText -Force
-                  $Cred = New-Object System.Management.Automation.PSCredential($ShareUser, $SecPass)
-                  
-                  # Use New-PSDrive for WinRM compatibility 
-                  New-PSDrive -Name "Z" -PSProvider FileSystem -Root $ShareUNC -Credential $Cred | Out-Null
-                  
-                  $SharePath = "Z:\$DateFolder"
-                  
-                  if (!(Test-Path $SharePath)) { New-Item -ItemType Directory -Path $SharePath -Force | Out-Null }
-                  
-                  Copy-Item $SummaryFile -Destination $SharePath -Force
-                  
-                  Remove-PSDrive -Name "Z" -Force -ErrorAction SilentlyContinue | Out-Null
-                  Write-Host "✅ Summary copied to share: $ShareUNC\$DateFolder"
-
+                    $SharePath = Join-Path $ShareUNC $DateFolder
+                    if (!(Test-Path $SharePath)) { New-Item -ItemType Directory -Path $SharePath -Force | Out-Null }
+                    
+                    Copy-Item $SummaryFile -Destination $SharePath -Force
+                    Write-Output "Successfully copied to $SharePath"
                 } catch {
-                  Write-Host "⚠️ Could not copy summary to share: $($_.Exception.Message)"
-                  Remove-PSDrive -Name "Z" -Force -ErrorAction SilentlyContinue | Out-Null
+                    Throw "File copy failed: $($_.Exception.Message)"
+                } finally {
+                    & net.exe use $ShareRoot /delete /y 2>&1 | Out-Null
                 }
               } else {
-                Write-Host "⚠️ Skipping share copy: No credentials provided."
+                Write-Output "Skipping share copy: No credentials provided."
               }
           args:
             executable: powershell
+          register: log_copy_result
           when: final_updates is defined
+
+        - name: Print Copy Results
+          debug:
+            var: log_copy_result.stdout_lines
+          when: log_copy_result is defined and log_copy_result.stdout_lines is defined
 
         # --- GUI CACHE REFRESH ---
         - name: Force GUI (Update Orchestrator) to refresh its state
