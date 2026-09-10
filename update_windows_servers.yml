@@ -11,13 +11,15 @@
       - kevireis-vc2.reisingers.com
       - kevireis-delllt.reisingers.com
       - server2k19.reisingers.com
-    share_unc_path: "\\kevireis-home\\i$\\Documents\\Kevin\\Network Documentation\\Server Updates"
-    share_username: ""
-    share_password: ""
+      
+    # Fixed UNC path with 4 backslashes for correct YAML parsing
+    share_unc_path: "\\\\kevireis-home\\i$\\Documents\\Kevin\\Network Documentation\\Server Updates"
+    share_username: "YOUR_USERNAME_HERE"
+    share_password: "YOUR_PASSWORD_HERE"
     cleanup_days: 30
-    asfsdfsdf
-    # Set to true onasdfly if you need to nuke the update cache to fix a severely broken server
-    force_cacheasdfasdf_reset: false 
+    
+    # Set to true only if you need to nuke the update cache to fix a severely broken server
+    force_cache_reset: false 
 
   tasks:
     - name: Ensure C:\Temp exists
@@ -71,7 +73,7 @@
                 state: absent
 
             - name: Start Windows Update and related services
-              win_servasdfsdfice:
+              win_service:
                 name: "{{ item }}"
                 state: started
               loop:
@@ -110,10 +112,10 @@
           register: retry_result
           when: >
             update_result.updates is defined and
-            (update_result.updasdfsdfates | dict2items | selectattr('value.installed', 'equalto', false) | list | length > 0)
+            (update_result.updates | dict2items | selectattr('value.installed', 'equalto', false) | list | length > 0)
 
         - name: Combine update results (merge retry with original)
-          set_fact:asdf
+          set_fact:
             final_updates: >-
               {{
                 (update_result.updates | default({})) |
@@ -173,7 +175,7 @@
               
               $Summary | Out-File -FilePath $SummaryFile -Encoding UTF8
 
-              if ($ShareUser -ne "" -and $SharePass -ne "") {
+              if ($ShareUser -ne "" -and $SharePass -ne "" -and $ShareUser -ne "YOUR_USERNAME_HERE") {
                 # Extract root of the share (e.g. \\kevireis-home\i$)
                 $ShareParts = $ShareUNC.Split('\') | Where-Object { $_ }
                 $ShareRoot = "\\$($ShareParts[0])\$($ShareParts[1])"
@@ -196,7 +198,7 @@
                     & net.exe use $ShareRoot /delete /y 2>&1 | Out-Null
                 }
               } else {
-                Write-Output "Skipping share copy: No credentials provided."
+                Write-Output "Skipping share copy: No credentials provided or placeholder used."
               }
           args:
             executable: powershell
